@@ -1,7 +1,3 @@
-<!--
-  The YAML block below is Hugging Face Spaces config — it's what makes the
-  free one-container deploy work. Harmless on GitHub. Keep `sdk: docker`.
--->
 ---
 title: ManufactureIQ
 emoji: 🏭
@@ -11,6 +7,9 @@ sdk: docker
 app_port: 7860
 pinned: false
 ---
+
+<!-- The YAML block above is Hugging Face Spaces config (keep it at the very top,
+     and keep `sdk: docker`). It's harmless on GitHub. -->
 
 # ManufactureIQ
 
