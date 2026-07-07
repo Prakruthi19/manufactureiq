@@ -76,7 +76,7 @@ _structured_llm = None
 def _get_structured_llm():
     global _structured_llm
     if _structured_llm is None:
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=os.getenv("OPENAI_API_KEY"))
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=os.getenv("OPENAI_API_KEY"), timeout=30, max_retries=1)
         _structured_llm = llm.with_structured_output(SupplierAlertOutput)
     return _structured_llm
 

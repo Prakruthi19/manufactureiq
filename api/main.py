@@ -88,6 +88,23 @@ def get_inspection(task_id: str) -> StatusResponse:
     return out
 
 
+# ── Catch stray writes to unknown paths ───────────────────────────────────────
+# Without this, a POST/PUT/etc. to any non-API path (e.g. bots probing /submit)
+# falls through to the StaticFiles mount below, which only serves GET/HEAD and so
+# returns a bare 405. Answer with an explicit JSON 404 instead. GET is untouched,
+# so the SPA is still served normally.
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+
+@app.api_route("/{full_path:path}", methods=["POST", "PUT", "PATCH", "DELETE"])
+def unknown_write(full_path: str, request: Request) -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"detail": f"No such endpoint: {request.method} /{full_path}"},
+    )
+
+
 # ── Serve the built React dashboard ───────────────────────────────────────────
 # In the single-container deploy the frontend is built into ../frontend/dist and
 # served here, so the whole app lives at one origin (no CORS, no separate host).

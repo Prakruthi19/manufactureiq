@@ -73,6 +73,8 @@ class ComplianceReportAgent:
             model="gpt-4o-mini",
             api_key=os.getenv("OPENAI_API_KEY"),
             temperature=0.2,
+            timeout=30,        # fail fast instead of hanging the solo worker
+            max_retries=1,
         )
 
     def run(self, state: PipelineState) -> PipelineState:

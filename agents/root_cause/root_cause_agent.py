@@ -137,6 +137,8 @@ class RootCauseAnalyzerAgent:
                 model="gpt-4o-mini",
                 temperature=0.1,   # low temperature = consistent, factual answers
                 api_key=os.getenv("OPENAI_API_KEY"),
+                timeout=30,        # fail fast instead of hanging the solo worker
+                max_retries=1,
             )
             self.chain = ROOT_CAUSE_PROMPT | self.llm | StrOutputParser()
             logger.info(f"[{self.name}] LLM chain initialized — gpt-4o")
