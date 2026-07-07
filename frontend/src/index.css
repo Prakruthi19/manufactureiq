@@ -158,6 +158,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .placeholder { text-align: center; color: var(--muted); padding: 44px; font-size: 14px; }
 .alert { border-radius: 6px; padding: 10px 12px; font-size: 13px; margin-top: 12px; }
 .alert.error { background: var(--danger-soft); border: 1px solid var(--danger); color: #7a251c; }
+.alert.ok { background: var(--ok-soft); border: 1px solid var(--ok); color: #1f5c3d; margin-bottom: 14px; }
+.alert.ok strong { color: var(--ok); }
 
 /* Tabs */
 .tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }

@@ -6,18 +6,22 @@ import Telemetry from './components/Telemetry'
 import AgentDetails from './components/AgentDetails'
 import BatchPanel from './components/BatchPanel'
 
+// A real Overstrain Failure (OSF) record from the AI4I 2020 dataset (UDI 161).
+// The classifier reads torque + tool wear from the notes, so both are stated
+// explicitly here — wear×torque ≈ 13,100 pushes it over the OSF threshold and
+// the model predicts a defect (≈99% conf), which exercises agents 4–7.
 const SAMPLE_INSPECTION = {
-  record_id: 'REC-001',
-  batch_id: 'BATCH-0146',
-  product_id: 'M014860',
-  machine_id: 'MCH-002',
-  timestamp: '2026-07-06T09:00:00',
-  raw_notes: 'Power failure detected. Torque spike at 1741 rpm.',
+  record_id: 'REC-004',
+  batch_id: 'BATCH-0161',
+  product_id: 'L47340',
+  machine_id: 'MCH-L-004',
+  timestamp: '2026-07-04T09:03:00',
+  raw_notes: 'Overstrain Failure detected. Torque 60.7 Nm, tool wear 216 min at 1282 rpm.',
 }
 const SAMPLE_SENSOR = {
-  sensor_id: 'MCH-002-S1',
-  temperature_c: 27.6,
-  machine_speed_rpm: 1741,
+  sensor_id: 'MCH-L-004-S1',
+  temperature_c: 25.25,
+  machine_speed_rpm: 1282,
   anomaly_flagged: true,
 }
 
@@ -135,6 +139,9 @@ export default function App() {
   const result = poll?.result
   const done = poll?.state === 'SUCCESS' || poll?.state === 'FAILURE'
   const running = taskId && (!done || revealing)
+  // Healthy machine → the graph skips root cause / trend / supplier / compliance.
+  // Surface that explicitly so the greyed-out downstream agents don't read as a hang.
+  const healthy = done && !revealing && result?.classification?.defect_type === 'no_defect'
   const doneCount = Object.values(agentStatus).filter((s) => s === 'done').length
   const singleProgress = doneCount / AGENTS.length
 
@@ -199,6 +206,14 @@ export default function App() {
 
         {/* ── Main: pipeline + outputs ─────────────────────── */}
         <main className="main">
+          {healthy && (
+            <div className="alert ok">
+              <strong>✓ Healthy — no defect detected.</strong> Downstream analysis
+              (root cause, trend, supplier alert, compliance) was intentionally
+              skipped. Agents 04–07 show “not run” by design, not because the
+              pipeline stalled.
+            </div>
+          )}
           <AgentPipeline agentStatus={agentStatus} tiers={TIERS} agents={AGENTS} progress={singleProgress} />
 
           {result && result.sensor_summary && (
