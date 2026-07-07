@@ -1,0 +1,14 @@
+.git/
+.env
+.env.*
+venv/
+.cache_home/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+chroma/
+scratchpad/

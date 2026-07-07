@@ -1,0 +1,82 @@
+# render.yaml — ManufactureIQ full-stack blueprint for Render
+# ------------------------------------------------------------
+# Deploy: push this repo to GitHub, then in Render:
+#   New +  →  Blueprint  →  pick this repo.
+# Render reads this file and creates all 4 services below.
+# You'll be prompted once for OPENAI_API_KEY (it's marked sync:false).
+
+services:
+  # ── Redis — Celery broker + result backend ──────────────────────
+  - type: redis
+    name: miq-redis
+    plan: free
+    maxmemoryPolicy: noeviction     # required — Celery brokers must not evict jobs
+    ipAllowList: []                 # internal-only, no public access
+
+  # ── FastAPI backend (web) ───────────────────────────────────────
+  - type: web
+    name: miq-api
+    runtime: python
+    plan: starter                   # free tier also works but cold-starts
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: REDIS_URL
+        fromService: { type: redis, name: miq-redis, property: connectionString }
+      - key: OPENAI_API_KEY
+        sync: false                 # you enter this in the Render dashboard
+      - key: CHROMA_CACHE_DIR
+        value: /tmp/chroma_cache     # writable; ONNX embedder downloads here once
+      - key: ANONYMIZED_TELEMETRY
+        value: "False"
+      - key: OTEL_SDK_DISABLED
+        value: "true"
+      - key: CREWAI_DISABLE_TELEMETRY
+        value: "true"
+      - key: LITELLM_TELEMETRY
+        value: "False"
+
+  # ── Celery worker — runs the 7-agent pipeline ───────────────────
+  - type: worker
+    name: miq-worker
+    runtime: python
+    plan: starter                   # workers have no free tier on Render
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A celery_app worker --loglevel=info --concurrency=2
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: REDIS_URL
+        fromService: { type: redis, name: miq-redis, property: connectionString }
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CHROMA_CACHE_DIR
+        value: /tmp/chroma_cache
+      - key: ANONYMIZED_TELEMETRY
+        value: "False"
+      - key: OTEL_SDK_DISABLED
+        value: "true"
+      - key: CREWAI_DISABLE_TELEMETRY
+        value: "true"
+      - key: LITELLM_TELEMETRY
+        value: "False"
+
+  # ── React dashboard (static site) ───────────────────────────────
+  - type: web
+    name: miq-frontend
+    runtime: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: frontend/dist
+    routes:
+      # Proxy /api to the backend so the browser stays same-origin (no CORS needed).
+      # ⚠️ If Render names your API service differently, update this host.
+      - type: rewrite
+        source: /api/*
+        destination: https://miq-api.onrender.com/api/*
+      # SPA fallback — every other path serves the app shell.
+      - type: rewrite
+        source: /*
+        destination: /index.html

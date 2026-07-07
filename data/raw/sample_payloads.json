@@ -1,0 +1,134 @@
+[
+  {
+    "inspection": {
+      "record_id": "REC-001",
+      "batch_id": "BATCH-0051",
+      "product_id": "L47230",
+      "machine_id": "MCH-L-001",
+      "operator_id": "OPR-001",
+      "supplier_id": "SUP-001",
+      "material_batch_id": "BATCH-0051",
+      "timestamp": "2026-07-01T09:00:00",
+      "raw_notes": "Power Failure detected. Torque 4.6Nm at 2861 rpm."
+    },
+    "sensors": [
+      {
+        "sensor_id": "MCH-L-001-S1",
+        "timestamp": "2026-07-01T09:00:00",
+        "temperature_c": 25.75,
+        "machine_speed_rpm": 2861,
+        "anomaly_flagged": true
+      }
+    ]
+  },
+  {
+    "inspection": {
+      "record_id": "REC-002",
+      "batch_id": "BATCH-0070",
+      "product_id": "L47249",
+      "machine_id": "MCH-L-002",
+      "operator_id": "OPR-002",
+      "supplier_id": "SUP-002",
+      "material_batch_id": "BATCH-0070",
+      "timestamp": "2026-07-02T09:01:00",
+      "raw_notes": "Power Failure detected. Torque 65.7Nm at 1410 rpm."
+    },
+    "sensors": [
+      {
+        "sensor_id": "MCH-L-002-S1",
+        "timestamp": "2026-07-02T09:01:00",
+        "temperature_c": 25.75,
+        "machine_speed_rpm": 1410,
+        "anomaly_flagged": true
+      }
+    ]
+  },
+  {
+    "inspection": {
+      "record_id": "REC-003",
+      "batch_id": "BATCH-0078",
+      "product_id": "L47257",
+      "machine_id": "MCH-L-003",
+      "operator_id": "OPR-003",
+      "supplier_id": "SUP-003",
+      "material_batch_id": "BATCH-0078",
+      "timestamp": "2026-07-03T09:02:00",
+      "raw_notes": "Tool Wear Failure detected. Torque 41.3Nm at 1455 rpm."
+    },
+    "sensors": [
+      {
+        "sensor_id": "MCH-L-003-S1",
+        "timestamp": "2026-07-03T09:02:00",
+        "temperature_c": 25.65,
+        "machine_speed_rpm": 1455,
+        "anomaly_flagged": true
+      }
+    ]
+  },
+  {
+    "inspection": {
+      "record_id": "REC-004",
+      "batch_id": "BATCH-0161",
+      "product_id": "L47340",
+      "machine_id": "MCH-L-004",
+      "operator_id": "OPR-004",
+      "supplier_id": "SUP-001",
+      "material_batch_id": "BATCH-0161",
+      "timestamp": "2026-07-04T09:03:00",
+      "raw_notes": "Overstrain Failure detected. Torque 60.7Nm at 1282 rpm."
+    },
+    "sensors": [
+      {
+        "sensor_id": "MCH-L-004-S1",
+        "timestamp": "2026-07-04T09:03:00",
+        "temperature_c": 25.25,
+        "machine_speed_rpm": 1282,
+        "anomaly_flagged": true
+      }
+    ]
+  },
+  {
+    "inspection": {
+      "record_id": "REC-005",
+      "batch_id": "BATCH-0001",
+      "product_id": "M14860",
+      "machine_id": "MCH-M-005",
+      "operator_id": "OPR-005",
+      "supplier_id": "SUP-002",
+      "material_batch_id": "BATCH-0001",
+      "timestamp": "2026-07-05T09:04:00",
+      "raw_notes": "Nominal run, no failure."
+    },
+    "sensors": [
+      {
+        "sensor_id": "MCH-M-005-S1",
+        "timestamp": "2026-07-05T09:04:00",
+        "temperature_c": 24.95,
+        "machine_speed_rpm": 1551,
+        "anomaly_flagged": false
+      }
+    ]
+  },
+  {
+    "inspection": {
+      "record_id": "REC-006",
+      "batch_id": "BATCH-0002",
+      "product_id": "L47181",
+      "machine_id": "MCH-L-006",
+      "operator_id": "OPR-001",
+      "supplier_id": "SUP-003",
+      "material_batch_id": "BATCH-0002",
+      "timestamp": "2026-07-06T09:05:00",
+      "raw_notes": "Nominal run, no failure."
+    },
+    "sensors": [
+      {
+        "sensor_id": "MCH-L-006-S1",
+        "timestamp": "2026-07-06T09:05:00",
+        "temperature_c": 25.05,
+        "machine_speed_rpm": 1408,
+        "anomaly_flagged": false
+      }
+    ]
+  }
+]
