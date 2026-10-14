@@ -31,6 +31,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import BaseModel
 
+from core.defect_knowledge import KNOWLEDGE
 from core.state import PipelineState, SupplierAlert
 
 logger = logging.getLogger(__name__)
@@ -58,10 +59,11 @@ Your job:
 3. If YES — write a clear, professional supplier alert
 4. If NO — set should_alert to false and leave other fields empty
 
-Alert criteria (alert if ANY of these are true):
-- Root cause analysis identifies material_issue = true
-- Trend report shows supplier_pattern
-- Root cause mentions contamination, material quality, or batch variation
+You are only called when the pipeline already has evidence of a material link
+(the same material lot failing on several tools, or root-cause analysis naming
+incoming material for a pattern that material can cause). Decide whether the
+evidence is strong enough to contact the supplier; if it is thin, set
+should_alert to false and say why.
 
 Alert message rules:
 - Professional and factual — no accusations
@@ -76,7 +78,7 @@ _structured_llm = None
 def _get_structured_llm():
     global _structured_llm
     if _structured_llm is None:
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=os.getenv("OPENAI_API_KEY"), timeout=30, max_retries=1)
+        llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), temperature=0.2, api_key=os.getenv("OPENAI_API_KEY"), timeout=30, max_retries=1)
         _structured_llm = llm.with_structured_output(SupplierAlertOutput)
     return _structured_llm
 
@@ -114,7 +116,7 @@ class SupplierAlertAgentRunner:
             prompt = self._build_prompt(state)
 
             # ── Run structured LLM ────────────────────────────────────────────
-            logger.info(f"[{self.name}] Running GPT-4o (structured output)...")
+            logger.info(f"[{self.name}] Running LLM (structured output)...")
             output: SupplierAlertOutput = _get_structured_llm().invoke([
                 SystemMessage(content=SUPPLIER_ALERT_INSTRUCTIONS),
                 HumanMessage(content=prompt),
@@ -161,20 +163,16 @@ class SupplierAlertAgentRunner:
         if not state.ingested.inspection.supplier_id:
             return False
 
-        # Check root cause
-        if state.root_cause and state.root_cause.material_issue:
-            return True
-
-        # Check trend pattern
+        # Strongest evidence: the same material lot is failing on several tools.
         if state.trend and state.trend.pattern == "supplier_pattern":
             return True
 
-        # Check defect type — material contamination always alerts
-        if state.classification:
-            if state.classification.defect_type == "material_contamination":
-                return True
-
-        return False
+        # Otherwise only if the pattern CAN come from incoming material
+        # (Random, Near-full) AND root-cause analysis concluded it did.
+        # One wafer with an Edge-Ring is a tool problem — never the supplier's.
+        pattern = getattr(state.classification, "pattern", None) if state.classification else None
+        material_possible = bool(pattern and KNOWLEDGE.get(pattern, {}).get("material_link"))
+        return material_possible and bool(state.root_cause and state.root_cause.material_issue)
 
     def _build_prompt(self, state: PipelineState) -> str:
         """Build the prompt string for the OpenAI Agent."""
@@ -195,7 +193,7 @@ Timestamp:        {inspection.timestamp}
 
 DEFECT CLASSIFICATION
 ---------------------
-Type:       {clf.defect_type if clf else 'Unknown'}
+Pattern:    {getattr(clf, 'pattern', clf.defect_type) if clf else 'Unknown'} (wafer-map failure pattern)
 Severity:   {clf.severity if clf else 'Unknown'}
 Confidence: {clf.confidence_score if clf else 0:.0%}
 Action:     {clf.recommended_action if clf else 'N/A'}
@@ -211,7 +209,7 @@ TREND REPORT
 ------------
 Pattern:          {trend.pattern if trend else 'Unknown'}
 Escalate:         {trend.escalate if trend else False}
-Frequency 7d:     {trend.defect_frequency_last_7d if trend else 0}
+Material tools:   {trend.material_tools_affected if trend else 0} tool(s) with defects on this material lot
 Affected Batches: {trend.affected_batch_ids if trend else []}
 Summary:          {trend.summary if trend else 'N/A'}
 

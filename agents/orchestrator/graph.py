@@ -84,16 +84,17 @@ def route_after_classifier(
     """After classification — continue, skip (healthy), or fail."""
     if state.status == "failed":
         return "failed"
-    # No defect → skip all downstream LLM analysis and finalize directly.
+    # No defect → skip the LLM agents, but still run the (cheap, ML-only) trend
+    # detector so the Isolation Forest can flag unusual-but-unclassified readings.
     if state.classification and state.classification.defect_type == "no_defect":
-        logger.info("[Orchestrator] No defect detected — skipping LLM analysis")
+        logger.info("[Orchestrator] No defect detected — skipping LLM analysis, running anomaly check")
         return "healthy"
     return "root_cause"
 
 
 def route_after_trend(
     state: PipelineState,
-) -> Literal["human_review", "parallel_actions"]:
+) -> Literal["human_review", "parallel_actions", "healthy"]:
     """
     After trend detection — decide if human review is needed.
 
@@ -104,6 +105,10 @@ def route_after_trend(
     """
     if state.status == "failed":
         return "parallel_actions"   # still run actions even if trend failed
+
+    # Healthy record — anomaly check done, nothing for the action tier to do.
+    if state.classification and state.classification.defect_type == "no_defect":
+        return "healthy"
 
     clf   = state.classification
     trend = state.trend
@@ -210,7 +215,7 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "classifier",
         lambda s: route_after_classifier(from_dict(s) if isinstance(s, dict) else s),
-        {"root_cause": "root_cause", "healthy": "finalize", "failed": "failed"}
+        {"root_cause": "root_cause", "healthy": "trend_detector", "failed": "failed"}
     )
 
     graph.add_edge("root_cause",     "trend_detector")
@@ -222,6 +227,7 @@ def build_graph() -> StateGraph:
         {
             "human_review":    "human_review",
             "parallel_actions": "actions",
+            "healthy":          "finalize",
         }
     )
 

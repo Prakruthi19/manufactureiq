@@ -4,7 +4,8 @@ ManufactureIQ — Data Ingestor Agent
 Agent 1 of 7 — Tier 1: Intake
 
 Framework:  Pure Python + Pydantic v2
-Role:       Validates and structures raw inspection JSON + sensor readings
+Role:       Validates and structures a raw wafer inspection: identifiers,
+            the wafer map (WM-811K grid) and the run's process sensors (SECOM)
 Input:      raw_inspection_payload (dict), raw_sensor_payload (list of dicts)
 Output:     IngestedData written to PipelineState.ingested
 
@@ -32,14 +33,20 @@ logger = logging.getLogger(__name__)
 
 
 # ── Field requirements ────────────────────────────────────────────────────────
-# These fields MUST exist for the pipeline to continue
+# These fields MUST exist for the pipeline to continue.
+# batch_id = production lot, machine_id = process tool. No wafer map → nothing
+# to classify, so it is critical too.
 CRITICAL_INSPECTION_FIELDS = [
     "record_id",
     "batch_id",
     "product_id",
     "machine_id",
     "timestamp",
+    "wafer_map",
 ]
+
+WAFER_MAP_MIN, WAFER_MAP_MAX = 5, 300     # grid side length, in die
+N_PROCESS_SENSORS            = 590        # SECOM signals per run
 
 # These fields are optional but logged as warnings if missing
 OPTIONAL_INSPECTION_FIELDS = [
@@ -47,8 +54,7 @@ OPTIONAL_INSPECTION_FIELDS = [
     "supplier_id",
     "material_batch_id",
     "raw_notes",
-    "image_url",
-    "defect_coords",
+    "process_sensors",
 ]
 
 
@@ -150,6 +156,18 @@ class DataIngestorAgent:
         # Parse and validate timestamp
         payload = self._normalize_timestamp(payload, "timestamp", warnings)
 
+        # Wafer map must be a clean 0/1/2 grid — a malformed map would silently
+        # produce garbage features, so reject it here.
+        map_error = self._check_wafer_map(payload.get("wafer_map"))
+        if map_error:
+            return None, [f"Invalid wafer_map: {map_error}"]
+
+        sensors = payload.get("process_sensors")
+        if sensors is not None and (not isinstance(sensors, list) or len(sensors) != N_PROCESS_SENSORS):
+            warnings.append(f"process_sensors must have {N_PROCESS_SENSORS} values "
+                            f"(got {len(sensors) if isinstance(sensors, list) else type(sensors).__name__}) — ignored")
+            payload = {**payload, "process_sensors": None}
+
         # Validate with Pydantic
         try:
             record = InspectionRecord(**payload)
@@ -157,6 +175,21 @@ class DataIngestorAgent:
         except ValidationError as e:
             errors = [f"Validation error: {err['msg']}" for err in e.errors()]
             return None, errors
+
+    @staticmethod
+    def _check_wafer_map(grid) -> Optional[str]:
+        if not isinstance(grid, list) or not grid or not all(isinstance(r, list) for r in grid):
+            return "must be a 2-D list"
+        h, w = len(grid), len(grid[0])
+        if not (WAFER_MAP_MIN <= h <= WAFER_MAP_MAX and WAFER_MAP_MIN <= w <= WAFER_MAP_MAX):
+            return f"size {h}x{w} outside {WAFER_MAP_MIN}-{WAFER_MAP_MAX}"
+        if any(len(r) != w for r in grid):
+            return "rows have different lengths"
+        if any(v not in (0, 1, 2) for r in grid for v in r):
+            return "values must be 0 (no die), 1 (pass) or 2 (fail)"
+        if not any(v for r in grid for v in r):
+            return "no die on the wafer"
+        return None
 
     def _parse_sensors(
         self, payload: list[dict], machine_id: str
@@ -169,8 +202,7 @@ class DataIngestorAgent:
         sensors   = []
 
         if not payload:
-            warnings.append("No sensor readings provided — pipeline will run with inspection data only")
-            return sensors, warnings
+            return sensors, warnings      # optional: process data lives in inspection.process_sensors
 
         for i, raw in enumerate(payload):
             raw = self._normalize_timestamp(raw, "timestamp", warnings)

@@ -1,0 +1,55 @@
+{
+  "trained_at": "2026-10-05T21:49:47.174180",
+  "dataset_rows": 10000,
+  "features": [
+    "Air temperature (K)",
+    "Process temperature (K)",
+    "Rotational speed (rpm)",
+    "Torque (Nm)",
+    "Tool wear (min)",
+    "Type_encoded",
+    "power_W",
+    "temp_diff_K",
+    "wear_torque"
+  ],
+  "classes": [
+    "HDF",
+    "OSF",
+    "PWF",
+    "TWF",
+    "none"
+  ],
+  "best_classifier": "xgboost",
+  "rf_accuracy": 0.9855,
+  "rf_f1": 0.9876,
+  "xgb_accuracy": 0.992,
+  "xgb_f1": 0.9918,
+  "rf_macro_f1_failures": 0.7286,
+  "xgb_macro_f1_failures": 0.7689,
+  "per_class_recall": {
+    "HDF": 1.0,
+    "OSF": 0.938,
+    "PWF": 1.0,
+    "TWF": 0.222,
+    "none": 0.996
+  },
+  "rnf_excluded": true,
+  "class_weighting": "balanced",
+  "isolation_forest": {
+    "features": [
+      "Rotational speed [rpm]",
+      "Torque [Nm]",
+      "Tool wear [min]",
+      "power_W",
+      "temp_diff_K",
+      "wear_torque"
+    ],
+    "fit_on": "healthy rows only",
+    "contamination": 0.05,
+    "n_estimators": 200,
+    "flagged_failures": 0.2773,
+    "flagged_healthy": 0.0127,
+    "failure_score": -0.0097,
+    "normal_score": 0.0967
+  }
+}

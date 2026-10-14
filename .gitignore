@@ -23,3 +23,16 @@ frontend/dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local Celery queue/results (CELERY_LOCAL=1)
+data/celery_local/
+
+# Datasets — re-created by scripts/download_data.py + build_wafer_features.py
+data/raw/wm811k/
+data/raw/secom/
+data/processed/wm811k_features.npz
+data/processed/wm811k_maps48.npz
+# Runtime inspection history (core/history.py)
+data/history.sqlite
+data/raw/wm811k_unlabelled/
+data/processed/wm811k_unlabelled_maps48.npz

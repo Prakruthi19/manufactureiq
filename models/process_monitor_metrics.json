@@ -1,0 +1,83 @@
+{
+  "trained_at": "2026-10-09T01:47:42+00:00",
+  "dataset": "SECOM (UCI) \u2014 1,567 runs, 590 sensors, real semiconductor line",
+  "split": {
+    "type": "chronological 70/30",
+    "train": [
+      "2008-07-19 11:55:00",
+      "2008-09-26 02:26:00"
+    ],
+    "test": [
+      "2008-09-26 03:12:00",
+      "2008-10-17 06:07:00"
+    ],
+    "train_failures": 78,
+    "test_failures": 26
+  },
+  "sensors_kept": 444,
+  "cv_comparison": {
+    "logreg_unweighted": {
+      "pr_auc": 0.098,
+      "pr_auc_std": 0.036,
+      "roc_auc": 0.549
+    },
+    "logreg_balanced": {
+      "pr_auc": 0.118,
+      "pr_auc_std": 0.06,
+      "roc_auc": 0.547
+    },
+    "logreg_smote": {
+      "pr_auc": 0.119,
+      "pr_auc_std": 0.062,
+      "roc_auc": 0.53
+    },
+    "random_forest_balanced": {
+      "pr_auc": 0.162,
+      "pr_auc_std": 0.032,
+      "roc_auc": 0.675
+    },
+    "xgboost_weighted": {
+      "pr_auc": 0.161,
+      "pr_auc_std": 0.069,
+      "roc_auc": 0.597
+    },
+    "isolation_forest": {
+      "pr_auc": 0.089,
+      "pr_auc_std": 0.026,
+      "roc_auc": 0.511
+    }
+  },
+  "selected": "random_forest_balanced",
+  "alert_threshold": 0.09374831095440796,
+  "false_alarm_budget": 0.1,
+  "test": {
+    "pr_auc": 0.069,
+    "pr_auc_ci95": [
+      0.043,
+      0.12
+    ],
+    "roc_auc": 0.579,
+    "roc_auc_ci95": [
+      0.473,
+      0.683
+    ],
+    "random_baseline_pr_auc": 0.055,
+    "at_threshold": {
+      "failures_caught": "2/26",
+      "recall": 0.077,
+      "false_alarm_rate": 0.07,
+      "precision": 0.061
+    }
+  },
+  "evaluation_contrast_roc_auc": {
+    "smote_before_random_split": 1.0,
+    "random_split_no_leak": 0.799,
+    "chronological_split": 0.579
+  },
+  "decision": "Weak signal on future runs: shown as a low-confidence process-risk score; it never escalates on its own. SPC out-of-control sensors are passed to root-cause analysis as evidence.",
+  "spc_typical_out_of_control_p95": 13.0,
+  "demo_test_rows": [
+    1096,
+    1566
+  ]
+}

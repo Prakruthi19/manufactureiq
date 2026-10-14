@@ -51,7 +51,7 @@ function AgentNode({ agent, step, status }) {
       <div className="agent-body">
         <div className="agent-name">
           {agent.name}
-          {agent.llm && <span className="llm-tag">LLM</span>}
+          {agent.tag && <span className={`llm-tag ${agent.tag === 'ML' ? 'ml-tag' : ''}`}>{agent.tag}</span>}
         </div>
         <div className="agent-desc">{agent.desc}</div>
         {status === 'running' && <div className="node-bar"><span /></div>}

@@ -12,3 +12,15 @@ frontend/node_modules/
 frontend/dist/
 chroma/
 scratchpad/
+
+# Training-only data (runtime needs models/, data/chroma/, data/processed/demo_samples.json)
+data/raw/
+data/processed/wm811k_features.npz
+data/processed/wm811k_maps48.npz
+data/history.sqlite
+data/celery_local/
+models_backup_*/
+models/legacy_ai4i/
+scripts/legacy_ai4i/
+data/raw/wm811k_unlabelled/
+data/processed/wm811k_unlabelled_maps48.npz

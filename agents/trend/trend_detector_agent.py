@@ -3,209 +3,153 @@ ManufactureIQ — Trend Detector Agent
 ======================================
 Agent 5 of 7 — Tier 2: Analysis
 
-Framework:  Pure Python + Pandas + Scikit-learn (Isolation Forest)
-Role:       Detects whether the current defect is isolated or
-            part of a systemic pattern across batches, machines,
-            or suppliers using the trained Isolation Forest model.
+Framework:  SQLite inspection history + scikit-learn (SECOM process monitor)
+Role:       Decides whether this wafer is a one-off or part of a pattern, and
+            whether the process run itself looked risky.
 
-Input:      state.classification  (from Agent 3)
-            state.root_cause      (from Agent 4)
-            state.ingested        (from Agent 1)
-Output:     state.trend           (TrendReport)
+    1. Records the wafer in the inspection history (core/history.py)
+    2. Lot pattern      — ≥3 wafers in this lot share the defect pattern
+    3. Tool pattern     — this tool produced the same SYSTEMATIC pattern on
+                          ≥3 recent wafers from ≥2 different lots (one lot alone
+                          could just be a bad lot; two lots on one tool points
+                          at the tool)
+    4. Material pattern — defective wafers that share one material lot span
+                          ≥2 tools AND ≥2 production lots. Lot and tool both
+                          vary; the material is the only common factor. Once
+                          there is enough history (≥50 wafers on other
+                          material lots), its defect rate must also be ≥2× theirs.
+    5. Process risk     — the SECOM model's failure-risk score for this run.
+                          On held-out future months this model was barely better
+                          than chance (test ROC-AUC ≈ 0.58), so it is REPORTED
+                          but never escalates anything on its own.
 
-Why ML not LLM:
-    Pattern detection across thousands of historical records
-    is a data problem not a language problem.
-    Isolation Forest detects anomalous clusters without
-    needing labeled examples of "what a bad trend looks like".
+Input:      state.classification, state.ingested, state.sensor_summary
+Output:     state.trend (TrendReport)
 """
 
 import logging
-import joblib
-import math
-import numpy as np
-import pandas as pd
+from datetime import datetime
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Optional
 
+import joblib
+import numpy as np
+
+from core import history
+from core.defect_knowledge import SYSTEMATIC
+from core.secom import risk_score
 from core.state import PipelineState, TrendReport
 
-logger   = logging.getLogger(__name__)
-BASE_DIR = Path(__file__).parent.parent.parent
+logger     = logging.getLogger(__name__)
+MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "models"
 
-PATTERN_THRESHOLDS = {
-    "batch_defect_rate":    0.10,
-    "machine_defect_rate":  0.08,
-    "supplier_defect_rate": 0.12,
-    "frequency_spike":      3,
-    "isolation_score":      -0.05,
-}
+LOT_MIN_SAME        = 3
+TOOL_MIN_SAME       = 3
+TOOL_MIN_LOTS       = 2
+MATERIAL_MIN_TOOLS  = 2
+MATERIAL_MIN_LOTS   = 2
+MATERIAL_RATE_RATIO = 2.0
+MATERIAL_BASELINE_N = 50      # below this, too little history to compare rates
 
 
 class TrendDetectorAgent:
 
     def __init__(self):
-        self.name    = "TrendDetectorAgent"
-        self.model   = None
-        self.scaler  = None
-        self.history = None
-        self._load_models()
-        self._load_history()
-
-    def _load_models(self):
-        models_dir  = BASE_DIR / "models"
-        self.model  = joblib.load(models_dir / "trend_detector.pkl")
-        self.scaler = joblib.load(models_dir / "trend_scaler.pkl")
-        logger.info(f"[{self.name}] Isolation Forest loaded")
-
-    def _load_history(self):
-        try:
-            data_path    = BASE_DIR / "data" / "raw" / "ai4i2020.csv"
-            self.history = pd.read_csv(data_path)
-            if "power_W" not in self.history.columns:
-                self.history["power_W"] = (
-                    self.history["Torque [Nm]"] *
-                    self.history["Rotational speed [rpm]"] *
-                    (2 * math.pi / 60)
-                )
-            if "temp_diff_K" not in self.history.columns:
-                self.history["temp_diff_K"] = (
-                    self.history["Process temperature [K]"] -
-                    self.history["Air temperature [K]"]
-                )
-            if "wear_torque" not in self.history.columns:
-                self.history["wear_torque"] = (
-                    self.history["Tool wear [min]"] *
-                    self.history["Torque [Nm]"]
-                )
-            logger.info(f"[{self.name}] History loaded — {len(self.history):,} rows")
-        except FileNotFoundError:
-            logger.warning(f"[{self.name}] Dataset not found — pattern analysis limited")
-            self.history = None
+        self.name = "TrendDetectorAgent"
+        bundle = joblib.load(MODELS_DIR / "process_monitor.pkl")
+        self.process_model     = bundle["model"]
+        self.process_threshold = bundle["threshold"]
+        logger.info(f"[{self.name}] Process monitor loaded ({bundle['kind']})")
 
     def run(self, state: PipelineState) -> PipelineState:
         logger.info(f"[{self.name}] Starting — run_id: {state.run_id}")
-
-        if state.status == "failed":
-            return state
-
-        if not state.classification:
-            state.errors.append(f"[{self.name}] No classification — skipping")
+        if state.status == "failed" or not state.classification:
             return state
 
         try:
-            inspection = state.ingested.inspection
-            clf        = state.classification
-            sensors    = state.ingested.sensors
-            sensor     = sensors[0] if sensors else None
+            insp    = state.ingested.inspection
+            pattern = state.classification.pattern
+            history.record(insp.record_id, insp.batch_id, insp.machine_id,
+                           insp.supplier_id, insp.material_batch_id, pattern)
 
-            iso_score                        = self._get_isolation_score(sensor, state.sensor_summary)
-            batch_pattern, batch_ids         = self._check_batch_pattern(inspection.batch_id)
-            machine_pattern, machine_ids     = self._check_machine_pattern(inspection.machine_id)
-            supplier_pattern                 = self._check_supplier_pattern(inspection.supplier_id)
-            freq_7d, freq_spike              = self._check_frequency(inspection.machine_id, clf.defect_type)
-            pattern                          = self._determine_pattern(iso_score, batch_pattern, machine_pattern, supplier_pattern)
+            report = TrendReport(pattern="isolated")
+            parts: list[str] = []
 
-            escalate = freq_spike or machine_pattern or supplier_pattern or iso_score < PATTERN_THRESHOLDS["isolation_score"]
+            # ── Process risk (SECOM) — informational only ─────────────────────
+            if insp.process_sensors:
+                x = np.array([[np.nan if v is None else float(v) for v in insp.process_sensors]])
+                report.process_risk  = round(float(risk_score(self.process_model, x)[0]), 4)
+                report.process_alert = report.process_risk >= self.process_threshold
 
-            parts = []
-            if pattern == "isolated":
-                parts.append("Defect appears isolated to this inspection record.")
-            if batch_pattern:
-                parts.append(f"Batch pattern detected across {len(batch_ids)} batches.")
-            if machine_pattern:
-                parts.append(f"Machine {inspection.machine_id} shows recurring failures.")
-            if supplier_pattern and inspection.supplier_id:
-                parts.append(f"Supplier {inspection.supplier_id} material linked to pattern.")
-            if freq_spike:
-                parts.append(f"Frequency spike: {freq_7d} occurrences in last 7 days.")
-            parts.append(f"Isolation score: {iso_score:.4f} ({'anomalous' if iso_score < 0 else 'normal'}).")
+            if pattern == "none":
+                report.summary = "No defect pattern on this wafer."
+                if report.process_alert:
+                    report.summary += (" The process run scored above the risk threshold, but that "
+                                       "model is a weak predictor — treat as a prompt to check SPC, not a finding.")
+                state.trend = report
+                state.status = "trend_detected"
+                return state
 
-            state.trend = TrendReport(
-                pattern=pattern,
-                affected_batch_ids=batch_ids[:5],
-                affected_machine_ids=machine_ids[:5],
-                defect_frequency_last_7d=freq_7d,
-                escalate=escalate,
-                summary=" ".join(parts),
-            )
+            # ── Lot ───────────────────────────────────────────────────────────
+            seen, same = history.lot_stats(insp.batch_id, pattern)
+            report.lot_wafers_seen, report.lot_same_pattern = seen, same
+            lot_hit = same >= LOT_MIN_SAME
+            if lot_hit:
+                report.pattern = "batch_pattern"
+                report.affected_batch_ids = [insp.batch_id]
+                parts.append(f"{same} of {seen} inspected wafers in lot {insp.batch_id} show {pattern}.")
+
+            # ── Tool ──────────────────────────────────────────────────────────
+            tool_hit = False
+            if pattern in SYSTEMATIC:
+                n, n_lots, lots = history.tool_recent(insp.machine_id, pattern)
+                report.tool_same_pattern_recent = n
+                tool_hit = n >= TOOL_MIN_SAME and n_lots >= TOOL_MIN_LOTS
+                if tool_hit:
+                    report.pattern = "machine_pattern"
+                    report.affected_machine_ids = [insp.machine_id]
+                    report.affected_batch_ids = lots[:5]
+                    parts.append(f"Tool {insp.machine_id} produced {pattern} on {n} recent wafers "
+                                 f"across {n_lots} lots — points at the tool, not one lot.")
+
+            # ── Material ──────────────────────────────────────────────────────
+            mat_hit = False
+            if insp.material_batch_id:
+                m = history.material_stats(insp.material_batch_id)
+                report.material_tools_affected = m["tools_with_defects"]
+                has_baseline = m["baseline_wafers"] >= MATERIAL_BASELINE_N
+                mat_hit = (m["tools_with_defects"] >= MATERIAL_MIN_TOOLS and
+                           m["lots_with_defects"] >= MATERIAL_MIN_LOTS and
+                           (not has_baseline or
+                            m["defect_rate"] >= MATERIAL_RATE_RATIO * max(m["baseline_defect_rate"], 0.01)))
+                if mat_hit:
+                    report.pattern = "supplier_pattern"
+                    base = (f"{m['defect_rate']:.0%} vs {m['baseline_defect_rate']:.0%} on other material lots"
+                            if has_baseline else "too little history yet for a rate comparison")
+                    parts.append(f"Material lot {insp.material_batch_id}: {m['defects']}/{m['wafers']} wafers "
+                                 f"defective across {m['lots_with_defects']} lots and "
+                                 f"{m['tools_with_defects']} tools — the material is the common factor ({base}).")
+
+            if not parts:
+                parts.append(f"No repeat of {pattern} yet in this lot, on this tool, or on this material "
+                             f"({seen} wafer(s) from the lot inspected so far).")
+            if report.process_risk is not None:
+                parts.append(f"Process-run risk score {report.process_risk:.2f} "
+                             f"({'above' if report.process_alert else 'below'} threshold; low-confidence model).")
+
+            report.escalate = lot_hit or tool_hit or mat_hit
+            report.summary  = " ".join(parts)
+            state.trend      = report
             state.status     = "trend_detected"
             state.updated_at = datetime.utcnow()
-
-            logger.info(f"[{self.name}] Done — pattern: {pattern} | escalate: {escalate}")
+            logger.info(f"[{self.name}] Done — {report.pattern} | escalate {report.escalate}")
 
         except Exception as e:
-            state.errors.append(f"[{self.name}] Error: {str(e)}")
+            state.errors.append(f"[{self.name}] Error: {e}")
             logger.exception(f"[{self.name}] Unexpected error")
 
         return state
 
-    def _get_isolation_score(self, sensor, summary: Optional[dict]) -> float:
-        summary  = summary or {}
-        temp_c   = (sensor.temperature_c or 27.0) if sensor else 27.0
-        rpm      = (sensor.machine_speed_rpm or 1500) if sensor else 1500
-        torque   = 40.0
-        tool_wear= 50.0
-        power_w  = summary.get("power_w") or (torque * rpm * (2 * math.pi / 60))
-        temp_diff= summary.get("temp_diff_k") or 10.0
-        wear_t   = summary.get("wear_torque") or (tool_wear * torque)
-        features = np.array([[rpm, torque, tool_wear, power_w, temp_diff, wear_t, 1]])
-        scaled   = self.scaler.transform(features)
-        return float(self.model.decision_function(scaled)[0])
 
-    def _check_batch_pattern(self, batch_id: Optional[str]) -> tuple[bool, list]:
-        if self.history is None or not batch_id or "batch_id" not in self.history.columns:
-            return False, []
-        batch_data  = self.history[self.history["batch_id"] == batch_id]
-        if len(batch_data) == 0:
-            return False, []
-        defect_rate = batch_data["Machine failure"].mean()
-        affected    = list(self.history[self.history["Machine failure"] == 1]["batch_id"].unique()[:5])
-        return defect_rate > PATTERN_THRESHOLDS["batch_defect_rate"], affected
-
-    def _check_machine_pattern(self, machine_id: Optional[str]) -> tuple[bool, list]:
-        if self.history is None or not machine_id or "machine_id" not in self.history.columns:
-            return False, []
-        machine_data = self.history[self.history["machine_id"] == machine_id]
-        if len(machine_data) == 0:
-            return False, []
-        defect_rate  = machine_data["Machine failure"].mean()
-        affected     = list(self.history[self.history["Machine failure"] == 1]["machine_id"].unique()[:5])
-        return defect_rate > PATTERN_THRESHOLDS["machine_defect_rate"], affected
-
-    def _check_supplier_pattern(self, supplier_id: Optional[str]) -> bool:
-        if self.history is None or not supplier_id or "supplier_id" not in self.history.columns:
-            return False
-        supplier_data = self.history[self.history["supplier_id"] == supplier_id]
-        if len(supplier_data) == 0:
-            return False
-        return supplier_data["Machine failure"].mean() > PATTERN_THRESHOLDS["supplier_defect_rate"]
-
-    def _check_frequency(self, machine_id: Optional[str], defect_type: str) -> tuple[int, bool]:
-        if self.history is None or "timestamp" not in self.history.columns:
-            return 0, False
-        try:
-            self.history["timestamp"] = pd.to_datetime(self.history["timestamp"])
-            cutoff  = self.history["timestamp"].max() - timedelta(days=7)
-            recent  = self.history[(self.history["timestamp"] >= cutoff) & (self.history["Machine failure"] == 1)]
-            if machine_id and "machine_id" in self.history.columns:
-                recent = recent[recent["machine_id"] == machine_id]
-            freq        = len(recent)
-            avg_weekly  = (self.history["Machine failure"].sum() / 90) * 7
-            return freq, freq > avg_weekly * PATTERN_THRESHOLDS["frequency_spike"]
-        except Exception:
-            return 0, False
-
-    def _determine_pattern(self, iso_score, batch_pattern, machine_pattern, supplier_pattern) -> str:
-        if supplier_pattern: return "supplier_pattern"
-        if machine_pattern:  return "machine_pattern"
-        if batch_pattern:    return "batch_pattern"
-        if iso_score < PATTERN_THRESHOLDS["isolation_score"]: return "batch_pattern"
-        return "isolated"
-
-
-# ── LangGraph node function ───────────────────────────────────────────────────
 _agent = TrendDetectorAgent()
 
 def trend_detector_node(state: PipelineState) -> PipelineState:

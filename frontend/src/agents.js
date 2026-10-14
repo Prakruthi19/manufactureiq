@@ -1,14 +1,14 @@
 // The 7-agent architecture, mirroring agents/orchestrator/graph.py.
-// `llm: true` agents are not run in the dry pipeline (Step 1) yet.
+// `tag` marks which agents are ML models vs LLM calls.
 
 export const AGENTS = [
-  { key: 'ingestor',       name: 'Data Ingestor',       tier: 1, icon: '📥', desc: 'Validates & structures the raw payload' },
-  { key: 'sensor_parser',  name: 'Sensor Parser',       tier: 1, icon: '📈', desc: 'Derives metrics, flags failure risks' },
-  { key: 'classifier',     name: 'Defect Classifier',   tier: 2, icon: '🧠', desc: 'XGBoost defect prediction' },
-  { key: 'root_cause',     name: 'Root Cause Analyzer', tier: 2, icon: '🔍', desc: 'RAG + GPT-4o causal analysis', llm: true },
-  { key: 'trend',          name: 'Trend Detector',      tier: 2, icon: '📊', desc: 'Batch / machine pattern detection', llm: true },
-  { key: 'supplier_alert', name: 'Supplier Alert',      tier: 3, icon: '🚨', desc: 'Notifies supplier on material defects', llm: true },
-  { key: 'compliance',     name: 'Compliance Report',   tier: 3, icon: '📋', desc: 'Generates ISO 9001 report', llm: true },
+  { key: 'ingestor',       name: 'Data Ingestor',       tier: 1, icon: '📥', desc: 'Validates the wafer map + 590 process sensors' },
+  { key: 'sensor_parser',  name: 'Sensor Parser',       tier: 1, icon: '📈', desc: 'Wafer yield + SPC (mean ± 3σ) sensor check' },
+  { key: 'classifier',     name: 'Defect Classifier',   tier: 2, icon: '🧠', desc: 'XGBoost on 27 wafer-map features (WM-811K)', tag: 'ML' },
+  { key: 'root_cause',     name: 'Root Cause Analyzer', tier: 2, icon: '🔍', desc: 'Similar-wafer search + pattern knowledge + LLM', tag: 'LLM' },
+  { key: 'trend',          name: 'Trend Detector',      tier: 2, icon: '📊', desc: 'Lot / tool / material patterns + SECOM risk', tag: 'ML' },
+  { key: 'supplier_alert', name: 'Supplier Alert',      tier: 3, icon: '🚨', desc: 'Notifies supplier on material defects', tag: 'LLM' },
+  { key: 'compliance',     name: 'Compliance Report',   tier: 3, icon: '📋', desc: 'Generates ISO 9001 report', tag: 'LLM' },
 ]
 
 export const TIERS = {

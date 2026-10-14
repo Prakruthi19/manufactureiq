@@ -5,11 +5,12 @@ A lightweight, LLM-free execution path used for the first end-to-end
 milestone (backend → worker → frontend).
 
 Runs only the deterministic Tier-1 + ML agents:
-    ingestor → sensor_parser → classifier
+    ingestor → sensor_parser → classifier → trend_detector
 
-No OpenAI, no ChromaDB. Once the full LLM pipeline (root_cause, supplier,
-compliance) is wired and its import paths fixed, swap callers over to
-`agents.orchestrator.graph.run_graph`.
+No LLM calls, so a batch of wafers costs nothing and finishes in seconds. The
+trend detector is included so batch runs build the lot/tool history that
+pattern detection relies on. Single inspections use the full graph
+(`agents.orchestrator.graph.run_graph`).
 """
 
 import logging
@@ -19,6 +20,7 @@ from core.state import PipelineState
 from agents.ingestor.ingestor_agent import ingestor_node
 from agents.ingestor.sensor_parser_agent import sensor_parser_node
 from agents.classifier.defect_classifier_agent import defect_classifier_node
+from agents.trend.trend_detector_agent import trend_detector_node
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,7 @@ DRY_STAGES: list[tuple[str, Callable[[PipelineState], PipelineState]]] = [
     ("ingestor",       ingestor_node),
     ("sensor_parser",  sensor_parser_node),
     ("classifier",     defect_classifier_node),
+    ("trend_detector", trend_detector_node),
 ]
 
 
@@ -43,7 +46,7 @@ def run_dry_pipeline(
                  used by the Celery task to publish progress updates.
 
     Returns:
-        Final PipelineState (status == "classified", or "failed" if a stage halted).
+        Final PipelineState (status == "trend_detected", or "failed" if a stage halted).
     """
     for name, node in DRY_STAGES:
         state = node(state)

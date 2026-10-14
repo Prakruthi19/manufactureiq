@@ -1,4 +1,4 @@
-import sys, uuid, logging
+import json, sys, uuid, logging
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -15,25 +15,12 @@ logging.basicConfig(
 from core.state import PipelineState
 from agents.orchestrator.graph import run_graph
 
-INSPECTION = {
-    "record_id":         f"REC-{uuid.uuid4().hex[:8].upper()}",
-    "batch_id":          "BATCH-0146",
-    "product_id":        "M014860",
-    "machine_id":        "MCH-002",
-    "operator_id":       "OPR-003",
-    "supplier_id":       "SUP-003",
-    "material_batch_id": "MAT-0088",
-    "timestamp":         datetime.utcnow().isoformat(),
-    "raw_notes":         "High power draw detected. Torque: 76. Tool wear: 100 min.",
-}
-
-SENSORS = [{
-    "sensor_id":         "MCH-002-S1",
-    "timestamp":         datetime.utcnow().isoformat(),
-    "temperature_c":     26.85,
-    "machine_speed_rpm": 2800,
-    "anomaly_flagged":   True,
-}]
+# A held-out wafer from the demo set (never seen in training).
+_demo = json.loads((Path(__file__).resolve().parent.parent / "data" / "processed" / "demo_samples.json").read_text())
+_pick = next(s for s in _demo["singles"] if s["true_pattern"] != "none")
+INSPECTION = _pick["inspection"]
+SENSORS = []
+print(f"Wafer {INSPECTION['wafer_id']} — expert label: {_pick['true_pattern']}")
 
 print("\n" + "=" * 60)
 print("ManufactureIQ — Running Full 7-Agent Pipeline")
@@ -48,12 +35,11 @@ state = PipelineState(
 )
 
 print(f"\nRun ID:  {state.run_id}")
-print(f"Product: {INSPECTION['product_id']}")
-print(f"Batch:   {INSPECTION['batch_id']}")
-print(f"Machine: {INSPECTION['machine_id']}")
+print(f"Lot:     {INSPECTION['batch_id']}")
+print(f"Tool:    {INSPECTION['machine_id']}")
 print("\nStarting pipeline...\n")
 
-final = run_graph(state)
+final = run_graph(state, interrupt=False)
 
 elapsed = (datetime.utcnow() - start).total_seconds()
 
@@ -67,7 +53,7 @@ print(f"Errors:   {final.errors or 'None'}")
 if final.classification:
     c = final.classification
     print(f"\n── Defect Classification ──────────────────")
-    print(f"  Type:       {c.defect_type}")
+    print(f"  Pattern:    {c.pattern}  (expert: {_pick['true_pattern']})")
     print(f"  Severity:   {c.severity}")
     print(f"  Confidence: {c.confidence_score:.0%}")
     print(f"  Action:     {c.recommended_action}")
@@ -85,7 +71,7 @@ if final.trend:
     print(f"\n── Trend Report ───────────────────────────")
     print(f"  Pattern:    {t.pattern}")
     print(f"  Escalate:   {t.escalate}")
-    print(f"  Freq 7d:    {t.defect_frequency_last_7d}")
+    print(f"  Summary:    {t.summary}")
 
 if final.supplier_alert:
     a = final.supplier_alert

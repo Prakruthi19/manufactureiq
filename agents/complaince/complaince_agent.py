@@ -70,7 +70,7 @@ class ComplianceReportAgent:
     def __init__(self):
         self.name = "ComplianceReportAgent"
         self.llm  = ChatOpenAI(
-            model="gpt-4o-mini",
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             api_key=os.getenv("OPENAI_API_KEY"),
             temperature=0.2,
             timeout=30,        # fail fast instead of hanging the solo worker
@@ -94,7 +94,7 @@ class ComplianceReportAgent:
             context = self._build_context(state)
 
             # ── Single LLM call — QC analysis + ISO report in one prompt ──────
-            logger.info(f"[{self.name}] Generating ISO 9001 report (single gpt-4o-mini call)...")
+            logger.info(f"[{self.name}] Generating ISO 9001 report (single LLM call)...")
             response = self.llm.invoke([
                 SystemMessage(content=COMPLIANCE_SYSTEM_PROMPT),
                 HumanMessage(content=COMPLIANCE_USER_TEMPLATE.format(
@@ -138,31 +138,33 @@ class ComplianceReportAgent:
         clf        = state.classification
         root_cause = state.root_cause
         trend      = state.trend
-        sensors    = state.ingested.sensors
-        sensor     = sensors[0] if sensors else None
+        summary    = state.sensor_summary or {}
+        wafer      = summary.get("wafer") or {}
+        spc        = summary.get("spc") or {}
 
         return f"""
 INSPECTION RECORD
 -----------------
 Record ID:        {inspection.record_id}
 Product ID:       {inspection.product_id}
-Batch ID:         {inspection.batch_id}
-Machine ID:       {inspection.machine_id}
+Wafer ID:         {inspection.wafer_id or inspection.record_id}
+Lot ID:           {inspection.batch_id}
+Process tool:     {inspection.machine_id}
 Operator ID:      {inspection.operator_id or 'Unknown'}
 Supplier ID:      {inspection.supplier_id or 'Unknown'}
 Material Batch:   {inspection.material_batch_id or 'Unknown'}
 Timestamp:        {inspection.timestamp}
 Notes:            {inspection.raw_notes or 'None'}
 
-SENSOR DATA
------------
-Temperature:      {sensor.temperature_c if sensor else 'N/A'}°C
-RPM:              {sensor.machine_speed_rpm if sensor else 'N/A'}
-Anomaly flagged:  {sensor.anomaly_flagged if sensor else False}
+WAFER & PROCESS DATA
+--------------------
+Die / failing:    {wafer.get('die', 'N/A')} / {wafer.get('failing_die', 'N/A')}  (yield {wafer.get('yield_pct', 'N/A')}%)
+SPC:              {spc.get('out_of_control', 'N/A')} process sensors outside 3σ (normal ≤{spc.get('typical_out_of_control_p95', 'N/A')})
+Process risk:     {trend.process_risk if trend and trend.process_risk is not None else 'N/A'} (low-confidence model)
 
 DEFECT CLASSIFICATION
 ---------------------
-Defect type:      {clf.defect_type}
+Defect pattern:   {getattr(clf, 'pattern', clf.defect_type)} (WM-811K wafer-map pattern)
 Severity:         {clf.severity}
 Confidence:       {clf.confidence_score:.0%}
 Location:         {clf.location_description}
@@ -182,7 +184,7 @@ TREND REPORT
 ------------
 Pattern:          {trend.pattern if trend else 'Unknown'}
 Escalate:         {trend.escalate if trend else False}
-Frequency 7d:     {trend.defect_frequency_last_7d if trend else 0}
+Same pattern in lot: {trend.lot_same_pattern if trend else 0} of {trend.lot_wafers_seen if trend else 0} wafers inspected
 Affected batches: {trend.affected_batch_ids if trend else []}
 Affected machines:{trend.affected_machine_ids if trend else []}
 Summary:          {trend.summary if trend else 'N/A'}

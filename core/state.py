@@ -31,12 +31,17 @@ PipelineStatus = Literal[
 
 Severity = Literal["low", "medium", "high", "critical"]
 
+# WM-811K wafer-map failure patterns (core/defect_knowledge.py has what each means).
 DefectType = Literal[
-    "surface_scratch",
-    "structural_crack",
-    "dimensional_deviation",
-    "material_contamination",
-    "assembly_misalignment",
+    "no_defect",
+    "center",
+    "donut",
+    "edge_ring",
+    "edge_loc",
+    "loc",
+    "random",
+    "scratch",
+    "near_full",
     "unknown",
 ]
 
@@ -82,6 +87,13 @@ class InspectionRecord(BaseModel):
     raw_notes:         Optional[str] = None
     image_url:         Optional[str] = None
     defect_coords:     Optional[Any] = None
+
+    # Semiconductor inspection data
+    wafer_id:        Optional[str] = None
+    # WM-811K grid: 0 = no die, 1 = die passed, 2 = die failed
+    wafer_map:       Optional[list[list[int]]] = None
+    # One production run's 590 SECOM process-sensor readings (None = missing)
+    process_sensors: Optional[list[Optional[float]]] = None
 
 
 class IngestedData(BaseModel):
@@ -129,6 +141,15 @@ class TrendReport(BaseModel):
     defect_frequency_last_7d: int           = 0
     escalate:                 bool          = False
     summary:                  str           = ""
+
+    # SECOM process monitor — a LOW-confidence signal (see models/process_monitor_metrics.json)
+    process_risk:             Optional[float] = None
+    process_alert:            bool            = False
+    # Evidence behind `pattern`, from this system's own inspection history
+    lot_wafers_seen:          int  = 0
+    lot_same_pattern:         int  = 0
+    tool_same_pattern_recent: int  = 0
+    material_tools_affected:  int  = 0
 
 
 class SupplierAlert(BaseModel):

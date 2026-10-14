@@ -10,12 +10,18 @@ Endpoints:
     GET  /api/health                     — liveness
     POST /api/inspections                — submit an inspection, returns task_id
     GET  /api/inspections/{task_id}      — poll status + final result
+    GET  /api/samples                    — held-out demo wafers + batch scenarios
+    GET  /api/model-card                 — evaluation metrics for both models
+    DELETE /api/history                  — clear inspection history (re-run demos)
     POST /api/inspections/{task_id}/approve  — (full pipeline only, not yet active)
 """
 
+import json
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from celery.result import AsyncResult
@@ -86,6 +92,50 @@ def get_inspection(task_id: str) -> StatusResponse:
         out.error = str(res.info)
 
     return out
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+@lru_cache(maxsize=1)
+def _demo_samples() -> dict:
+    path = BASE_DIR / "data" / "processed" / "demo_samples.json"
+    if not path.exists():
+        raise HTTPException(503, "Demo samples not built — run scripts/build_demo_samples.py")
+    return json.loads(path.read_text())
+
+
+@app.get("/api/samples")
+def samples() -> dict:
+    """Held-out wafers (with their true label) and batch scenarios for the dashboard."""
+    return _demo_samples()
+
+
+@app.get("/api/model-card")
+def model_card() -> dict:
+    """Test-set metrics written by the training scripts — shown in the UI as-is."""
+    out = {}
+    for key, name in (("wafer_classifier", "wafer_classifier_metrics.json"),
+                      ("process_monitor", "process_monitor_metrics.json")):
+        path = BASE_DIR / "models" / name
+        out[key] = json.loads(path.read_text()) if path.exists() else None
+    return out
+
+
+@app.get("/api/drift")
+def drift_report() -> dict:
+    """How far recent live wafers' features have moved from the training data (PSI)."""
+    from core import drift
+    from core.wafer_features import FEATURE_NAMES
+    return drift.live_report(FEATURE_NAMES)
+
+
+@app.delete("/api/history")
+def clear_history() -> dict:
+    from core import drift, history
+    history.clear()
+    drift.clear()
+    return {"status": "cleared"}
 
 
 # ── Catch stray writes to unknown paths ───────────────────────────────────────

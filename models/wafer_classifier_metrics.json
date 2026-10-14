@@ -1,0 +1,575 @@
+{
+  "trained_at": "2026-10-12T17:54:32+00:00",
+  "dataset": "WM-811K (Wu et al. 2015) \u2014 172,950 expert-labelled wafer maps from a real fab",
+  "split": {
+    "method": "StratifiedGroupKFold by lot-block (1,000 consecutive wafers)",
+    "train": 110950,
+    "validation": 28000,
+    "test": 34000
+  },
+  "classes": [
+    "Center",
+    "Donut",
+    "Edge-Loc",
+    "Edge-Ring",
+    "Loc",
+    "Near-full",
+    "Random",
+    "Scratch",
+    "none"
+  ],
+  "strategy_comparison_validation": {
+    "unweighted": {
+      "macro_f1": 0.8705,
+      "macro_f1_patterns": 0.8558,
+      "defect_recall": 0.9308,
+      "false_alarm_rate": 0.0062,
+      "accuracy": 0.9755,
+      "per_class_recall": {
+        "Center": 0.964,
+        "Donut": 0.935,
+        "Edge-Loc": 0.811,
+        "Edge-Ring": 0.972,
+        "Loc": 0.65,
+        "Near-full": 0.875,
+        "Random": 0.889,
+        "Scratch": 0.632,
+        "none": 0.994
+      }
+    },
+    "balanced": {
+      "macro_f1": 0.8605,
+      "macro_f1_patterns": 0.8448,
+      "defect_recall": 0.9634,
+      "false_alarm_rate": 0.0196,
+      "accuracy": 0.9702,
+      "per_class_recall": {
+        "Center": 0.974,
+        "Donut": 0.903,
+        "Edge-Loc": 0.874,
+        "Edge-Ring": 0.981,
+        "Loc": 0.731,
+        "Near-full": 0.875,
+        "Random": 0.91,
+        "Scratch": 0.751,
+        "none": 0.98
+      }
+    },
+    "sqrt_balanced": {
+      "macro_f1": 0.8652,
+      "macro_f1_patterns": 0.8498,
+      "defect_recall": 0.9476,
+      "false_alarm_rate": 0.0107,
+      "accuracy": 0.9748,
+      "per_class_recall": {
+        "Center": 0.969,
+        "Donut": 0.871,
+        "Edge-Loc": 0.85,
+        "Edge-Ring": 0.975,
+        "Loc": 0.689,
+        "Near-full": 0.812,
+        "Random": 0.905,
+        "Scratch": 0.719,
+        "none": 0.989
+      }
+    },
+    "undersample_none": {
+      "macro_f1": 0.8679,
+      "macro_f1_patterns": 0.8533,
+      "defect_recall": 0.9672,
+      "false_alarm_rate": 0.0223,
+      "accuracy": 0.969,
+      "per_class_recall": {
+        "Center": 0.978,
+        "Donut": 0.903,
+        "Edge-Loc": 0.882,
+        "Edge-Ring": 0.981,
+        "Loc": 0.746,
+        "Near-full": 0.875,
+        "Random": 0.92,
+        "Scratch": 0.762,
+        "none": 0.978
+      }
+    },
+    "smote": {
+      "macro_f1": 0.886,
+      "macro_f1_patterns": 0.8732,
+      "defect_recall": 0.9371,
+      "false_alarm_rate": 0.0069,
+      "accuracy": 0.9764,
+      "per_class_recall": {
+        "Center": 0.965,
+        "Donut": 0.935,
+        "Edge-Loc": 0.823,
+        "Edge-Ring": 0.973,
+        "Loc": 0.657,
+        "Near-full": 1.0,
+        "Random": 0.92,
+        "Scratch": 0.724,
+        "none": 0.993
+      }
+    },
+    "rf_balanced": {
+      "macro_f1": 0.8563,
+      "macro_f1_patterns": 0.8399,
+      "defect_recall": 0.9161,
+      "false_alarm_rate": 0.0055,
+      "accuracy": 0.9731,
+      "per_class_recall": {
+        "Center": 0.963,
+        "Donut": 0.774,
+        "Edge-Loc": 0.772,
+        "Edge-Ring": 0.965,
+        "Loc": 0.604,
+        "Near-full": 1.0,
+        "Random": 0.884,
+        "Scratch": 0.578,
+        "none": 0.995
+      }
+    }
+  },
+  "selected_strategy": "smote",
+  "review_threshold": 0.81,
+  "calibration": {
+    "method": "temperature scaling, T fitted on validation (NLL)",
+    "temperature": 1.4516,
+    "test_ece_before": 0.0101,
+    "test_ece_after": 0.0016,
+    "test_ece_defect_relevant_before": 0.099,
+    "test_ece_defect_relevant_after": 0.065,
+    "bins_before": [
+      {
+        "lo": 0.3,
+        "hi": 0.4,
+        "confidence": 0.3805,
+        "accuracy": 0.5714,
+        "n": 7
+      },
+      {
+        "lo": 0.4,
+        "hi": 0.5,
+        "confidence": 0.4605,
+        "accuracy": 0.4,
+        "n": 60
+      },
+      {
+        "lo": 0.5,
+        "hi": 0.6,
+        "confidence": 0.5511,
+        "accuracy": 0.5279,
+        "n": 269
+      },
+      {
+        "lo": 0.6,
+        "hi": 0.7,
+        "confidence": 0.6531,
+        "accuracy": 0.5714,
+        "n": 266
+      },
+      {
+        "lo": 0.7,
+        "hi": 0.8,
+        "confidence": 0.7539,
+        "accuracy": 0.6774,
+        "n": 341
+      },
+      {
+        "lo": 0.8,
+        "hi": 0.9,
+        "confidence": 0.8562,
+        "accuracy": 0.7343,
+        "n": 557
+      },
+      {
+        "lo": 0.9,
+        "hi": 1.0,
+        "confidence": 0.9975,
+        "accuracy": 0.9909,
+        "n": 32500
+      }
+    ],
+    "bins_after": [
+      {
+        "lo": 0.3,
+        "hi": 0.4,
+        "confidence": 0.374,
+        "accuracy": 0.3448,
+        "n": 29
+      },
+      {
+        "lo": 0.4,
+        "hi": 0.5,
+        "confidence": 0.4692,
+        "accuracy": 0.4511,
+        "n": 133
+      },
+      {
+        "lo": 0.5,
+        "hi": 0.6,
+        "confidence": 0.5501,
+        "accuracy": 0.5684,
+        "n": 380
+      },
+      {
+        "lo": 0.6,
+        "hi": 0.7,
+        "confidence": 0.6526,
+        "accuracy": 0.6788,
+        "n": 411
+      },
+      {
+        "lo": 0.7,
+        "hi": 0.8,
+        "confidence": 0.7542,
+        "accuracy": 0.7115,
+        "n": 558
+      },
+      {
+        "lo": 0.8,
+        "hi": 0.9,
+        "confidence": 0.8564,
+        "accuracy": 0.8618,
+        "n": 854
+      },
+      {
+        "lo": 0.9,
+        "hi": 1.0,
+        "confidence": 0.9945,
+        "accuracy": 0.9947,
+        "n": 31635
+      }
+    ]
+  },
+  "drift_checks": {
+    "test_lots_vs_training": {
+      "status": "stable",
+      "max_psi": 0.0641,
+      "n_moderate": 0,
+      "n_major": 0,
+      "features": [
+        {
+          "feature": "fail_density",
+          "psi": 0.0641
+        },
+        {
+          "feature": "ring4_density",
+          "psi": 0.0621
+        },
+        {
+          "feature": "ring3_density",
+          "psi": 0.0597
+        },
+        {
+          "feature": "edge_sector_max",
+          "psi": 0.0544
+        },
+        {
+          "feature": "n_clusters",
+          "psi": 0.0523
+        }
+      ]
+    },
+    "defective_wafers_only_vs_training": {
+      "status": "major",
+      "max_psi": 3.4029,
+      "n_moderate": 6,
+      "n_major": 18,
+      "features": [
+        {
+          "feature": "largest_cluster_frac",
+          "psi": 3.4029
+        },
+        {
+          "feature": "clustered_frac",
+          "psi": 3.2888
+        },
+        {
+          "feature": "largest_cluster_fill",
+          "psi": 1.8887
+        },
+        {
+          "feature": "isolated_frac",
+          "psi": 1.873
+        },
+        {
+          "feature": "largest_cluster_area",
+          "psi": 1.815
+        }
+      ]
+    }
+  },
+  "test": {
+    "macro_f1": 0.8614,
+    "macro_f1_patterns": 0.8454,
+    "defect_recall": 0.9082,
+    "false_alarm_rate": 0.0065,
+    "accuracy": 0.9754,
+    "human_review_share": 0.0462,
+    "auto_classified_accuracy": 0.9273,
+    "defects_auto_passed_as_none": 189,
+    "defects_total": 4727
+  },
+  "test_per_class": {
+    "Center": {
+      "precision": 0.836,
+      "recall": 0.809,
+      "f1": 0.822,
+      "support": 283
+    },
+    "Donut": {
+      "precision": 0.713,
+      "recall": 0.86,
+      "f1": 0.78,
+      "support": 107
+    },
+    "Edge-Loc": {
+      "precision": 0.885,
+      "recall": 0.814,
+      "f1": 0.848,
+      "support": 1214
+    },
+    "Edge-Ring": {
+      "precision": 0.986,
+      "recall": 0.979,
+      "f1": 0.983,
+      "support": 1912
+    },
+    "Loc": {
+      "precision": 0.85,
+      "recall": 0.713,
+      "f1": 0.775,
+      "support": 717
+    },
+    "Near-full": {
+      "precision": 0.95,
+      "recall": 0.95,
+      "f1": 0.95,
+      "support": 40
+    },
+    "Random": {
+      "precision": 0.819,
+      "recall": 0.819,
+      "f1": 0.819,
+      "support": 177
+    },
+    "Scratch": {
+      "precision": 0.834,
+      "recall": 0.744,
+      "f1": 0.786,
+      "support": 277
+    },
+    "none": {
+      "precision": 0.985,
+      "recall": 0.994,
+      "f1": 0.989,
+      "support": 29273
+    }
+  },
+  "test_confusion_matrix": [
+    [
+      229,
+      1,
+      2,
+      0,
+      4,
+      0,
+      0,
+      0,
+      47
+    ],
+    [
+      3,
+      92,
+      0,
+      0,
+      6,
+      0,
+      5,
+      0,
+      1
+    ],
+    [
+      1,
+      0,
+      988,
+      18,
+      25,
+      0,
+      5,
+      1,
+      176
+    ],
+    [
+      0,
+      0,
+      12,
+      1872,
+      0,
+      0,
+      0,
+      0,
+      28
+    ],
+    [
+      14,
+      18,
+      42,
+      0,
+      511,
+      0,
+      1,
+      13,
+      118
+    ],
+    [
+      0,
+      0,
+      1,
+      0,
+      0,
+      38,
+      1,
+      0,
+      0
+    ],
+    [
+      5,
+      6,
+      4,
+      1,
+      5,
+      2,
+      145,
+      1,
+      8
+    ],
+    [
+      0,
+      3,
+      4,
+      2,
+      6,
+      0,
+      0,
+      206,
+      56
+    ],
+    [
+      22,
+      9,
+      63,
+      5,
+      44,
+      0,
+      20,
+      26,
+      29084
+    ]
+  ],
+  "feature_importance": [
+    [
+      "largest_cluster_frac",
+      0.166
+    ],
+    [
+      "largest_cluster_area",
+      0.1353
+    ],
+    [
+      "clustered_frac",
+      0.1098
+    ],
+    [
+      "largest_cluster_fill",
+      0.0931
+    ],
+    [
+      "center_vs_wafer",
+      0.0627
+    ],
+    [
+      "fail_density",
+      0.0431
+    ],
+    [
+      "mid_vs_center_edge",
+      0.0392
+    ],
+    [
+      "largest_cluster_radius",
+      0.036
+    ],
+    [
+      "ring0_density",
+      0.0339
+    ],
+    [
+      "ring5_density",
+      0.0324
+    ],
+    [
+      "ring2_density",
+      0.0318
+    ],
+    [
+      "ring3_density",
+      0.0273
+    ],
+    [
+      "edge_sector_max",
+      0.0242
+    ],
+    [
+      "largest_cluster_elongation",
+      0.0232
+    ],
+    [
+      "mean_fail_radius",
+      0.0178
+    ],
+    [
+      "edge_vs_wafer",
+      0.017
+    ],
+    [
+      "edge_sector_cv",
+      0.0157
+    ],
+    [
+      "line_score_largest",
+      0.0145
+    ],
+    [
+      "n_clusters",
+      0.0142
+    ],
+    [
+      "std_fail_radius",
+      0.0122
+    ],
+    [
+      "line_score",
+      0.0111
+    ],
+    [
+      "ring4_density",
+      0.0092
+    ],
+    [
+      "edge_sector_entropy",
+      0.0086
+    ],
+    [
+      "edge_sectors_hit",
+      0.0083
+    ],
+    [
+      "isolated_frac",
+      0.0072
+    ],
+    [
+      "ring1_density",
+      0.0061
+    ]
+  ]
+}

@@ -13,163 +13,143 @@ pinned: false
 
 # ManufactureIQ
 
-**An agentic quality-control platform for manufacturing.** ManufactureIQ ingests inspection records and sensor telemetry, then runs them through a 7-agent pipeline that classifies defects, finds root causes, detects batch/machine trends, alerts suppliers, and auto-generates ISO 9001 compliance reports — pausing for human sign-off on critical defects.
+**A multi-agent quality-control system for semiconductor fabs, trained on real fab data.**
+A wafer comes off the line; seven agents validate it, classify its failure pattern,
+explain the likely cause, check whether the problem repeats across a lot, a tool or a
+material lot, alert the supplier only when the evidence points at their material, and
+write an ISO 9001 corrective-action report.
 
-Built on **LangGraph** for orchestration, **Celery + Redis** for async processing, **XGBoost + Isolation Forest** for ML, **ChromaDB + GPT-4o** for retrieval-augmented root-cause analysis, and a **React/Vite** live dashboard.
+> 📘 **[docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md)** explains every design decision,
+> what the numbers mean, and the questions you'll be asked.
+>
+> 📗 **[docs/DATA_PREPARATION.md](docs/DATA_PREPARATION.md)** follows one wafer from the raw file to model input, step by step.
+
+## Results (held-out data, evaluated once)
+
+| Model | Data | Headline | Detail |
+|---|---|---|---|
+| **Defect Classifier** (XGBoost + SMOTE inside training folds) | WM-811K: 172,950 expert-labelled wafer maps | **Macro-F1 0.861** on 34,000 wafers from unseen lots | catches **90.8%** of defective wafers, **0.6%** false alarms; beat a CNN on the same split (0.840); calibrated confidence (ECE 0.010 → 0.002) |
+| **Process monitor** (balanced random forest) | SECOM: 1,567 runs × 590 sensors | **ROC-AUC 0.58** on future months (PR-AUC 0.069 vs 0.055 random) | weak, reported as such, never escalates on its own |
+
+Accuracy is not used for any decision: 86% of wafers have no defect, so "always none"
+scores 86%. Splits are **lot-aware** (wafers) and **chronological** (process runs), and
+the dashboard's **Model card** tab shows `models/*_metrics.json` verbatim.
+
+Why SECOM tutorials report ~99%: SMOTE applied *before* a random split leaks synthetic
+copies of test failures into training. Same model family, same data:
+**1.000** (leaky) → **0.80** (random split) → **0.58** (chronological). See the guide, §5.
+
+**In production:** confidences are temperature-calibrated (T = 1.45, fitted on validation),
+so wafers below **0.81** go to a human (4.6% on test). A **drift monitor** compares live
+wafers' features with the training data (PSI, no labels needed) and shows it on the Model
+card. See the guide, §4.7–4.8.
 
 ---
 
 ## Architecture
 
-Each inspection record flows through a LangGraph state machine as an independent Celery task, so many records process in parallel.
-
 ```
-                        ┌─────────── Tier 1 · Intake ───────────┐
-  inspection + sensors → │  Data Ingestor → Sensor Parser        │
-                        └───────────────────┬───────────────────┘
-                        ┌─────────── Tier 2 · Analysis ──────────┐
-                          Defect Classifier (XGBoost)
-                                 │  (no defect ──────────────► finalize)
-                          Root Cause Analyzer (RAG + GPT-4o)
-                          Trend Detector (Isolation Forest)
-                        └───────────────────┬───────────────────┘
-                          critical/high? ──► Human Review (pause) ──► approve/reject
-                        ┌─────────── Tier 3 · Action ────────────┐
-                          Supplier Alert  ‖  Compliance Report   (run concurrently)
-                        └───────────────────┬───────────────────┘
-                                         finalize
+                 ┌──────────── Tier 1 · Intake ────────────┐
+ wafer map  ───► │ Data Ingestor → Sensor Parser (SPC ±3σ) │
+ 590 sensors     └───────────────────┬─────────────────────┘
+                 ┌──────────── Tier 2 · Analysis ──────────┐
+                   Defect Classifier (XGBoost, 26 wafer features)
+                          │  (no defect → trend history → finalize)
+                   Root Cause (similar wafers in ChromaDB + pattern knowledge + LLM)
+                   Trend Detector (lot / tool / material repeats + SECOM risk)
+                 └───────────────────┬─────────────────────┘
+                   critical / low confidence ──► Human Review
+                 ┌──────────── Tier 3 · Action ────────────┐
+                   Supplier Alert (evidence-gated)  ‖  Compliance Report (ISO 9001)
+                 └─────────────────────────────────────────┘
 ```
 
-| # | Agent | Tier | What it does |
-|---|-------|------|--------------|
-| 1 | Data Ingestor | Intake | Validates & structures the raw inspection payload |
-| 2 | Sensor Parser | Intake | Derives metrics, flags failure risks |
-| 3 | Defect Classifier | Analysis | XGBoost multiclass defect prediction (99% test acc.) |
-| 4 | Root Cause Analyzer | Analysis | ChromaDB retrieval of similar past defects + GPT-4o causal analysis |
-| 5 | Trend Detector | Analysis | Isolation Forest anomaly detection across batches/machines |
-| 6 | Supplier Alert | Action | Notifies the supplier when a material defect is detected |
-| 7 | Compliance Report | Action | Generates an ISO 9001:2015 corrective/preventive report |
+| # | Agent | Decides with | Output |
+|---|---|---|---|
+| 1 | Data Ingestor | validation rules | rejects malformed wafer maps / sensor vectors |
+| 2 | Sensor Parser | statistical process control | yield; out-of-control sensors vs a normal run |
+| 3 | Defect Classifier | XGBoost on `core/wafer_features.py`, calibrated | pattern, calibrated confidence, severity, human-review flag; logs features for drift |
+| 4 | Root Cause | 10 nearest historical wafers (ChromaDB) + `core/defect_knowledge.py` + LLM | cause, evidence, neighbour agreement |
+| 5 | Trend Detector | rules over inspection history (`core/history.py`) + SECOM model | lot / tool / material pattern, escalate |
+| 6 | Supplier Alert | evidence gate, then LLM | alert only with cross-tool or material-linked evidence |
+| 7 | Compliance Report | LLM | ISO 9001 CAPA document |
 
-### Tech stack
+LLMs only explain and write; every decision is made by a model or a tested rule.
 
-- **Orchestration:** LangGraph (conditional routing, checkpointing, human-in-the-loop interrupts)
-- **API:** FastAPI (`api/main.py`) — submit / poll / (approve)
-- **Workers:** Celery, with Redis as broker + result backend
-- **ML:** scikit-learn (Isolation Forest), XGBoost — trained on the AI4I 2020 dataset (`models/`)
-- **RAG:** ChromaDB + `all-MiniLM-L6-v2` embeddings, GPT-4o for reasoning
-- **Frontend:** React 18 + Vite live dashboard (`frontend/`)
-
----
-
-## Prerequisites
-
-- **Python 3.11+**
-- **Node.js 18+** (for the dashboard)
-- **Docker Desktop** (for local Redis) — or an [Upstash](https://upstash.com) Redis URL
-- An **OpenAI API key** (used by agents 4–7)
+**Stack:** LangGraph · FastAPI · Celery (Redis, or a no-Docker local mode) · XGBoost ·
+scikit-learn · imbalanced-learn · ChromaDB · OpenAI (`gpt-4o-mini`, override with
+`OPENAI_MODEL`) · React + Vite.
 
 ---
 
 ## Local setup
 
-> Runs on Windows (PowerShell), macOS, or Linux. Commands below use PowerShell; the `python`/`pip` invocations are identical on other shells.
+> Commands are PowerShell; the `python` lines are identical on macOS / Linux.
 
-### 1. Clone & create a virtualenv
-
+### 1. Environment
 ```powershell
 python -m venv venv
-.\venv\Scripts\Activate.ps1        # macOS/Linux: source venv/bin/activate
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+cd frontend; npm install; cd ..
 ```
 
-### 2. Configure environment
-
-Create a `.env` in the project root:
-
+Create `.env`:
 ```ini
-# LLM
 OPENAI_API_KEY=sk-...
-
-# Redis (local Docker default)
+# Either Redis (docker compose -f docker_compose.yaml up -d) ...
 REDIS_URL=redis://localhost:6379/0
-# For Upstash cloud instead, use the TLS scheme:
-# REDIS_URL=rediss://default:<token>@<endpoint>:6379
-
-# ChromaDB persistence (keep the model cache off the system drive if you like)
-CHROMA_PERSIST_DIR=./data/chroma
-CHROMA_CACHE_DIR=./.cache_home
-
-# Silence library telemetry (prevents shutdown crashes in Celery workers)
+# ... or no Docker at all: folder queue + SQLite results
+CELERY_LOCAL=1
 ANONYMIZED_TELEMETRY=False
-CREWAI_DISABLE_TELEMETRY=true
 OTEL_SDK_DISABLED=true
-LITELLM_TELEMETRY=False
 ```
+If `OPENAI_API_KEY` is also set as a Windows user environment variable, that one wins
+over `.env`; remove it or keep the two in sync.
 
-### 3. Start Redis
-
+### 2. Data + models (one time, ~30 min on a laptop)
 ```powershell
-docker compose -f docker_compose.yaml up -d
+python scripts/download_data.py         # SECOM + WM-811K; verifies class counts vs the paper
+python scripts/build_wafer_features.py  # 26 features + 48×48 CNN maps × 172,950 wafers
+python scripts/train_models.py          # both models, similar-wafer index, demo samples
+python scripts/train_wafer_cnn.py       # optional: CNN comparison on the same split (~25 min CPU)
+python -m pytest tests -q               # no network / LLM needed
 ```
+Trained models, the similar-wafer index and the demo samples are committed, so this
+step can be skipped to just run the demo.
 
-### 4. (One-time) train models & seed the vector store
+**GPU experiments (Colab):** [`notebooks/wafer_cnn_colab.ipynb`](notebooks/wafer_cnn_colab.ipynb) re-trains the CNN on a
+free T4, pre-trains it self-supervised (SimCLR) on the ~638k unlabelled WM-811K wafers
+(`scripts/download_unlabelled.py`, `scripts/pretrain_wafer_cnn.py`), and tests whether that helps,
+with all labels and with only 10% of them. Same lot-aware split, same metrics.
 
-The repo already ships trained models in `models/` and a seeded `data/chroma/`, so you can **skip this** for a demo. To regenerate from scratch:
-
+### 3. Run (3 terminals)
 ```powershell
-python scripts/train_models.py     # → models/*.pkl + metadata.json
-python scripts/seed_chromadb.py    # loads defect history into ChromaDB (run once)
+celery -A celery_app worker --loglevel=info --pool=solo   # worker (solo pool on Windows)
+uvicorn api.main:app --port 8000                          # API
+cd frontend; npm run dev                                  # http://localhost:5173
 ```
 
-### 5. Run the stack (4 terminals)
+The dashboard has three tabs:
+- **Single wafer**: a held-out wafer through all 7 agents; the expert label is revealed after the prediction.
+- **Lot scenarios**: real held-out lots through the ML agents; watch lot / tool / material patterns appear.
+- **Model card**: every training metric, including the imbalance-strategy comparison, confusion matrix,
+  calibration (reliability chart) and live input drift.
 
-```powershell
-# Terminal 1 — Celery worker
-celery -A celery_app worker --loglevel=info --concurrency=4
-#   On Windows, add:  --pool=solo   (or --pool=threads)
-
-# Terminal 2 — FastAPI backend
-uvicorn api.main:app --reload --port 8000
-
-# Terminal 3 — Frontend dashboard
-cd frontend
-npm install
-npm run dev            # opens http://localhost:5173
-
-# Terminal 4 (optional) — Celery task monitor
-celery -A celery_app flower      # http://localhost:5555
-```
-
-Open **http://localhost:5173** — the dashboard proxies `/api` to the backend on `:8000` (see `frontend/vite.config.js`).
-
-### Quick sanity check (no frontend needed)
-
-```powershell
-python scripts/run_pipeline.py     # runs one record through all 7 agents, prints results
-```
-
----
-
-## API
-
+### API
 | Method | Endpoint | Purpose |
-|--------|----------|---------|
-| `GET`  | `/api/health` | Liveness |
-| `POST` | `/api/inspections` | Submit an inspection → returns `task_id` |
-| `GET`  | `/api/inspections/{task_id}` | Poll status + final result |
+|---|---|---|
+| `GET` | `/api/health` | liveness |
+| `POST` | `/api/inspections` | submit `{inspection, sensors, full}` → `task_id` |
+| `GET` | `/api/inspections/{task_id}` | status, progress, final state |
+| `GET` | `/api/samples` | held-out demo wafers + lot scenarios |
+| `GET` | `/api/model-card` | evaluation metrics |
+| `GET` | `/api/drift` | PSI of recent live wafers vs the training data |
+| `DELETE` | `/api/history` | clear inspection history |
 
-Submit body:
-
-```json
-{
-  "inspection": { "record_id": "REC-001", "batch_id": "BATCH-0146", "machine_id": "MCH-002", "...": "..." },
-  "sensors":    [ { "sensor_id": "MCH-002-S1", "temperature_c": 26.85, "machine_speed_rpm": 2800 } ],
-  "full": true
-}
-```
-
-- `full: true` → the full 7-agent LangGraph pipeline.
-- `full: false` → the fast **dry pipeline** (ingestor → sensor_parser → classifier), used for bulk CSV batches so they don't fire N× LLM calls.
+`inspection.wafer_map` is a WM-811K grid (0 = no die, 1 = pass, 2 = fail);
+`inspection.process_sensors` is 590 SECOM readings (`null` = missing).
+`full: false` runs the ML-only path (no LLM calls).
 
 ---
 
@@ -194,9 +174,8 @@ the HF config block at the top of this README make it work out of the box.
    Open the Space URL: the dashboard and API are both there.
 
 Notes: the free Space **sleeps after ~48h idle** (wakes on next visit) and storage
-is ephemeral — fine, since `models/` and `data/chroma/` ship inside the image and the
-embedding model downloads to `/tmp` on first root-cause call. Only OpenAI usage
-(agents 4–7, a few cents per inspection) costs anything.
+is ephemeral — fine, since `models/`, `data/chroma/` and the demo samples ship inside
+the image. Only OpenAI usage (agents 4, 6, 7 with `gpt-4o-mini`) costs anything.
 
 ### Option B — Render (managed, ~$14/mo)
 
@@ -209,8 +188,8 @@ the rewrite `destination` in `render.yaml`.
 
 ### Option C — laptop / single VM
 
-Run the four local terminals from [Local setup](#5-run-the-stack-4-terminals)
-against local Docker Redis (or Upstash). Lowest friction for a live, in-person pitch.
+Run the three terminals from [Local setup](#3-run-3-terminals) with `CELERY_LOCAL=1`
+(no Docker) or against Redis. Lowest friction for a live, in-person pitch.
 
 ---
 
@@ -218,26 +197,30 @@ against local Docker Redis (or Upstash). Lowest friction for a live, in-person p
 
 ```
 manufactureiq/
-├── agents/              # the 7 agents + LangGraph orchestrator
-│   ├── ingestor/  classifier/  root_cause/  trend/  supplier/  complaince/
-│   └── orchestrator/    # graph.py (LangGraph), dry_pipeline.py
-├── api/main.py          # FastAPI REST layer
-├── tasks/               # Celery task wrapping the pipeline
-├── core/state.py        # Pydantic PipelineState — shared schema for all agents
-├── celery_app.py        # Celery config (Redis broker/backend)
-├── models/              # trained XGBoost + Isolation Forest + encoders
-├── data/                # AI4I 2020 dataset, sample payloads, ChromaDB store
-├── scripts/             # train_models.py, seed_chromadb.py, run_pipeline.py
-├── frontend/            # React + Vite dashboard
-└── docker_compose.yaml  # local Redis
+├── agents/                 # the 7 agents + LangGraph orchestrator (graph.py, dry_pipeline.py)
+├── api/main.py             # FastAPI
+├── core/
+│   ├── state.py            # PipelineState: shared Pydantic schema
+│   ├── wafer_features.py   # 26 wafer-map features (training AND serving)
+│   ├── secom.py            # SECOM cleaning + SPC limits
+│   ├── calibration.py      # temperature scaling + reliability / ECE
+│   ├── drift.py            # PSI input-drift monitor (reference + live log)
+│   ├── defect_knowledge.py # pattern → likely causes / severity / material link
+│   └── history.py          # inspection history (lot / tool / material patterns)
+├── scripts/                # download, features, training, index, demo samples
+│   └── legacy_ai4i/        # the original AI4I version, kept for reference
+├── models/                 # trained models + *_metrics.json (legacy_ai4i/ = old models)
+├── data/                   # chroma/ (similar-wafer index), processed/demo_samples.json
+├── tests/                  # pytest suite
+├── docs/                   # INTERVIEW_GUIDE.md, DATA_PREPARATION.md
+├── notebooks/              # wafer_cnn_colab.ipynb — GPU runs (CNN, self-supervised pre-training)
+└── frontend/               # React + Vite dashboard
 ```
 
----
-
-## Notes
-
-- **Human-in-the-loop:** critical/high-severity defects pause the graph before Tier 3. In async mode the Celery task runs non-interactively (`interrupt=False`); interactive review via `resume_graph()` is exposed for the interactive/CLI path.
-- **Windows + Celery:** the default `prefork` pool can misbehave; use `--pool=solo` or `--pool=threads`.
-- **ChromaDB cache:** `scripts/seed_chromadb.py` redirects the embedding-model download to `CHROMA_CACHE_DIR` to keep it off the system drive and avoid worker-shutdown crashes.
-</content>
-</invoke>
+## Data sources
+- **WM-811K**: Wu, Jang & Chen, "Wafer Map Failure Pattern Recognition and Similarity
+  Ranking for Large-Scale Data Sets", *IEEE Trans. Semiconductor Manufacturing* 28(1), 2015.
+  Retrieved from a Hugging Face mirror; class counts verified against the published distribution.
+- **SECOM**: McCann & Johnston, UCI Machine Learning Repository, 2008.
+- Tool, supplier and material-lot IDs in the demo are simulated, and the two datasets come
+  from different fabs; see the guide, §3.

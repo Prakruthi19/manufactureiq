@@ -16,3 +16,27 @@ export async function getInspection(taskId) {
   if (!res.ok) throw new Error(`Fetch failed (${res.status})`)
   return res.json() // { task_id, state, progress?, result?, error? }
 }
+
+export async function getSamples() {
+  const res = await fetch('/api/samples')
+  if (!res.ok) throw new Error(`Could not load demo wafers (${res.status}) — run scripts/build_demo_samples.py`)
+  return res.json() // { singles: [...], scenarios: [...], note }
+}
+
+export async function getModelCard() {
+  const res = await fetch('/api/model-card')
+  if (!res.ok) throw new Error(`Could not load model card (${res.status})`)
+  return res.json()
+}
+
+export async function clearHistory() {
+  const res = await fetch('/api/history', { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Could not clear history (${res.status})`)
+  return res.json()
+}
+
+export async function getDrift() {
+  const res = await fetch('/api/drift')
+  if (!res.ok) throw new Error(`Could not load drift report (${res.status})`)
+  return res.json()
+}

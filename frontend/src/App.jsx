@@ -1,37 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
-import { submitInspection, getInspection } from './api'
+import { submitInspection, getInspection, getSamples } from './api'
 import { AGENTS, TIERS, finalStatusFor, sleep } from './agents'
 import AgentPipeline from './components/AgentPipeline'
-import Telemetry from './components/Telemetry'
 import AgentDetails from './components/AgentDetails'
 import BatchPanel from './components/BatchPanel'
+import ModelCard from './components/ModelCard'
+import WaferMap from './components/WaferMap'
+import Prediction from './components/Prediction'
 
-// A real Overstrain Failure (OSF) record from the AI4I 2020 dataset (UDI 161).
-// The classifier reads torque + tool wear from the notes, so both are stated
-// explicitly here — wear×torque ≈ 13,100 pushes it over the OSF threshold and
-// the model predicts a defect (≈99% conf), which exercises agents 4–7.
-const SAMPLE_INSPECTION = {
-  record_id: 'REC-004',
-  batch_id: 'BATCH-0161',
-  product_id: 'L47340',
-  machine_id: 'MCH-L-004',
-  timestamp: '2026-07-04T09:03:00',
-  raw_notes: 'Overstrain Failure detected. Torque 60.7 Nm, tool wear 216 min at 1282 rpm.',
-}
-const SAMPLE_SENSOR = {
-  sensor_id: 'MCH-L-004-S1',
-  temperature_c: 25.25,
-  machine_speed_rpm: 1282,
-  anomaly_flagged: true,
-}
+// Every demo wafer is a HELD-OUT WM-811K wafer (from lots the model never saw),
+// paired with a held-out SECOM process run. The true expert label stays hidden
+// until the model has answered, then the UI shows predicted vs actual.
 
-// All 7 agents run in the full pipeline — every one starts queued.
 const initStatus = () => Object.fromEntries(AGENTS.map((a) => [a.key, 'queued']))
 
 export default function App() {
-  const [mode, setMode] = useState('single') // 'single' | 'batch'
-  const [insp, setInsp] = useState(SAMPLE_INSPECTION)
-  const [sensor, setSensor] = useState(SAMPLE_SENSOR)
+  const [mode, setMode] = useState('single') // 'single' | 'batch' | 'model'
+  const [samples, setSamples] = useState(null)
+  const [sampleIdx, setSampleIdx] = useState(0)
+  const [insp, setInsp] = useState(null)
   const [taskId, setTaskId] = useState(null)
   const [poll, setPoll] = useState(null)
   const [error, setError] = useState(null)
@@ -41,9 +28,15 @@ export default function App() {
 
   const timerRef = useRef(null)
   const clockRef = useRef(null)
-  const revealedFor = useRef(null) // guard: only reveal once per task
+  const revealedFor = useRef(null)
+  const sawLive = useRef(false)
 
-  // Elapsed clock while a run is active
+  useEffect(() => {
+    getSamples()
+      .then((s) => { setSamples(s); setInsp(s.singles[0].inspection) })
+      .catch((e) => setError(e.message))
+  }, [])
+
   useEffect(() => {
     const active = taskId && !poll?.result && poll?.state !== 'FAILURE'
     if (active) {
@@ -53,16 +46,14 @@ export default function App() {
     return () => clearInterval(clockRef.current)
   }, [taskId, poll?.result, poll?.state])
 
-  // Poll the backend
   useEffect(() => {
     if (!taskId) return
     timerRef.current = setInterval(async () => {
       try {
         const data = await getInspection(taskId)
         setPoll(data)
-
-        // Reflect live "completed" list from the worker while it runs
         if (data.state === 'PROGRESS' && data.progress?.completed) {
+          if (data.progress.completed.length) sawLive.current = true
           setAgentStatus((s) => {
             const next = { ...s }
             data.progress.completed.forEach((k) => (next[k] = 'done'))
@@ -70,9 +61,7 @@ export default function App() {
             return next
           })
         }
-        if (data.state === 'SUCCESS' || data.state === 'FAILURE') {
-          clearInterval(timerRef.current)
-        }
+        if (data.state === 'SUCCESS' || data.state === 'FAILURE') clearInterval(timerRef.current)
       } catch (e) {
         setError(e.message)
         clearInterval(timerRef.current)
@@ -81,54 +70,45 @@ export default function App() {
     return () => clearInterval(timerRef.current)
   }, [taskId])
 
-  // Once the run finishes, cascade the agents so you SEE them work.
+  // Settle agents on their final status (cascade only if no live progress was seen).
   useEffect(() => {
     const result = poll?.result
     if (!result || revealedFor.current === taskId) return
     revealedFor.current = taskId
+    if (sawLive.current) {
+      setAgentStatus(Object.fromEntries(AGENTS.map((a) => [a.key, finalStatusFor(a.key, result)])))
+      return
+    }
     ;(async () => {
       setRevealing(true)
       for (const a of AGENTS) {
         const target = finalStatusFor(a.key, result)
-        if (target === 'skipped') {
-          setAgentStatus((s) => ({ ...s, [a.key]: 'skipped' }))
-          await sleep(90)
-          continue
-        }
+        if (target === 'skipped') { setAgentStatus((s) => ({ ...s, [a.key]: 'skipped' })); await sleep(90); continue }
         setAgentStatus((s) => ({ ...s, [a.key]: 'running' }))
-        await sleep(480)
+        await sleep(420)
         setAgentStatus((s) => ({ ...s, [a.key]: target }))
-        await sleep(160)
+        await sleep(140)
       }
       setRevealing(false)
     })()
   }, [poll?.result, taskId])
 
-  const setInspField = (k) => (e) => setInsp({ ...insp, [k]: e.target.value })
-  const setSensorField = (k) => (e) =>
-    setSensor({ ...sensor, [k]: k === 'anomaly_flagged' ? e.target.checked : e.target.value })
+  const sample = samples?.singles[sampleIdx]
+  const loadSample = (i) => {
+    setSampleIdx(i); setInsp(samples.singles[i].inspection)
+    setTaskId(null); setPoll(null); setAgentStatus(initStatus())
+  }
+  const setField = (k) => (e) => setInsp({ ...insp, [k]: e.target.value })
 
   async function handleSubmit(e) {
     e.preventDefault()
-    setError(null)
-    setPoll(null)
-    setTaskId(null)
-    setElapsed(0)
+    setError(null); setPoll(null); setTaskId(null); setElapsed(0)
     setAgentStatus(initStatus())
     revealedFor.current = null
+    sawLive.current = false
     try {
-      const sensors = [
-        {
-          sensor_id: sensor.sensor_id,
-          timestamp: insp.timestamp,
-          temperature_c: Number(sensor.temperature_c),
-          machine_speed_rpm: Number(sensor.machine_speed_rpm),
-          anomaly_flagged: Boolean(sensor.anomaly_flagged),
-        },
-      ]
-      // Mark first agent running immediately for instant feedback
       setAgentStatus((s) => ({ ...s, ingestor: 'running' }))
-      const { task_id } = await submitInspection(insp, sensors)
+      const { task_id } = await submitInspection(insp, [], true)
       setTaskId(task_id)
     } catch (e) {
       setError(e.message)
@@ -139,18 +119,15 @@ export default function App() {
   const result = poll?.result
   const done = poll?.state === 'SUCCESS' || poll?.state === 'FAILURE'
   const running = taskId && (!done || revealing)
-  // Healthy machine → the graph skips root cause / trend / supplier / compliance.
-  // Surface that explicitly so the greyed-out downstream agents don't read as a hang.
   const healthy = done && !revealing && result?.classification?.defect_type === 'no_defect'
   const doneCount = Object.values(agentStatus).filter((s) => s === 'done').length
-  const singleProgress = doneCount / AGENTS.length
 
   return (
     <div className="page">
       <header className="app-header">
         <div>
           <h1>ManufactureIQ</h1>
-          <p className="subtitle">Multi-agent defect inspection pipeline</p>
+          <p className="subtitle">Semiconductor wafer inspection · 7-agent pipeline · trained on WM-811K + SECOM</p>
         </div>
         <div className="header-stats">
           <Stat label="Agents" value={`${doneCount}/${AGENTS.length}`} />
@@ -160,75 +137,54 @@ export default function App() {
       </header>
 
       <div className="tabs">
-        <button className={`tab ${mode === 'single' ? 'active' : ''}`} onClick={() => setMode('single')}>Single inspection</button>
-        <button className={`tab ${mode === 'batch' ? 'active' : ''}`} onClick={() => setMode('batch')}>Batch (CSV)</button>
+        <button className={`tab ${mode === 'single' ? 'active' : ''}`} onClick={() => setMode('single')}>Single wafer</button>
+        <button className={`tab ${mode === 'batch' ? 'active' : ''}`} onClick={() => setMode('batch')}>Lot scenarios</button>
+        <button className={`tab ${mode === 'model' ? 'active' : ''}`} onClick={() => setMode('model')}>Model card</button>
       </div>
 
-      {mode === 'batch' ? (
-        <BatchPanel />
-      ) : (
+      {mode === 'model' && <ModelCard />}
+      {mode === 'batch' && <BatchPanel scenarios={samples?.scenarios} note={samples?.note} />}
+      {mode === 'single' && (
       <div className="layout">
-        {/* ── Sidebar: inspection form ─────────────────────── */}
         <form className="card sidebar" onSubmit={handleSubmit}>
-          <div className="card-head">
-            <h2>Inspection</h2>
-            <button type="button" className="link" onClick={() => { setInsp(SAMPLE_INSPECTION); setSensor(SAMPLE_SENSOR) }}>
-              Reset sample
+          <div className="card-head"><h2>Wafer inspection</h2></div>
+          {!samples && !error && <p className="batch-note">Loading held-out wafers…</p>}
+          {samples && insp && (<>
+            <label className="field full"><span>Held-out wafer</span>
+              <select className="sample-select" value={sampleIdx} onChange={(e) => loadSample(Number(e.target.value))}>
+                {samples.singles.map((s, i) => <option key={i} value={i}>{s.label}</option>)}
+              </select>
+            </label>
+            <WaferMap grid={insp.wafer_map} size={240}
+              caption={`${insp.wafer_map.length}×${insp.wafer_map[0].length} grid · red = failing die`} />
+            <div className="fields">
+              <Field label="Lot" value={insp.batch_id} onChange={setField('batch_id')} />
+              <Field label="Tool" value={insp.machine_id} onChange={setField('machine_id')} />
+              <Field label="Supplier" value={insp.supplier_id || ''} onChange={setField('supplier_id')} />
+              <Field label="Material lot" value={insp.material_batch_id || ''} onChange={setField('material_batch_id')} />
+            </div>
+            <p className="batch-hint">
+              Process run: SECOM row {sample.secom_run.row} (held-out period, 590 sensors).
+              Tool / supplier IDs are simulated — the datasets don't include them.
+            </p>
+            <button className="submit" type="submit" disabled={running}>
+              {running ? 'Running pipeline…' : 'Run inspection'}
             </button>
-          </div>
-          <div className="fields">
-            <Field label="Record ID"  value={insp.record_id}  onChange={setInspField('record_id')} />
-            <Field label="Batch ID"   value={insp.batch_id}   onChange={setInspField('batch_id')} />
-            <Field label="Product ID" value={insp.product_id} onChange={setInspField('product_id')} />
-            <Field label="Machine ID" value={insp.machine_id} onChange={setInspField('machine_id')} />
-          </div>
-          <Field label="Timestamp" value={insp.timestamp} onChange={setInspField('timestamp')} full />
-          <label className="notes-label">Notes
-            <textarea rows={2} value={insp.raw_notes} onChange={setInspField('raw_notes')} />
-          </label>
-
-          <h3>Sensor reading</h3>
-          <Field label="Sensor ID" value={sensor.sensor_id} onChange={setSensorField('sensor_id')} full />
-          <div className="fields">
-            <Field label="Temp °C"   value={sensor.temperature_c}     onChange={setSensorField('temperature_c')} type="number" />
-            <Field label="Speed RPM" value={sensor.machine_speed_rpm} onChange={setSensorField('machine_speed_rpm')} type="number" />
-          </div>
-          <label className="check">
-            <input type="checkbox" checked={sensor.anomaly_flagged} onChange={setSensorField('anomaly_flagged')} />
-            Anomaly flagged
-          </label>
-
-          <button className="submit" type="submit" disabled={running}>
-            {running ? 'Running pipeline…' : 'Run inspection'}
-          </button>
+          </>)}
           {error && <div className="alert error">{error}</div>}
         </form>
 
-        {/* ── Main: pipeline + outputs ─────────────────────── */}
         <main className="main">
           {healthy && (
             <div className="alert ok">
-              <strong>✓ Healthy — no defect detected.</strong> Downstream analysis
-              (root cause, trend, supplier alert, compliance) was intentionally
-              skipped. Agents 04–07 show “not run” by design, not because the
-              pipeline stalled.
+              <strong>✓ No defect pattern.</strong> Root cause, supplier alert and compliance are
+              skipped for clean wafers by design. The trend detector still recorded it in the lot history.
             </div>
           )}
-          <AgentPipeline agentStatus={agentStatus} tiers={TIERS} agents={AGENTS} progress={singleProgress} />
-
-          {result && result.sensor_summary && (
-            <Telemetry summary={result.sensor_summary} />
-          )}
-
-          {!taskId && (
-            <div className="card placeholder">
-              <p>Submit an inspection to watch the agents process it.</p>
-            </div>
-          )}
-
-          {result && (
-            <AgentDetails state={result} agentStatus={agentStatus} />
-          )}
+          <AgentPipeline agentStatus={agentStatus} tiers={TIERS} agents={AGENTS} progress={doneCount / AGENTS.length} />
+          {!taskId && <div className="card placeholder"><p>Pick a held-out wafer and run it. The expert label is revealed after the model answers.</p></div>}
+          {result?.classification && !revealing && <Prediction state={result} truth={sample?.true_pattern} secom={sample?.secom_run} />}
+          {result && <AgentDetails state={result} agentStatus={agentStatus} />}
         </main>
       </div>
       )}
@@ -236,11 +192,11 @@ export default function App() {
   )
 }
 
-function Field({ label, value, onChange, type = 'text', full }) {
+function Field({ label, value, onChange }) {
   return (
-    <label className={`field ${full ? 'full' : ''}`}>
+    <label className="field">
       <span>{label}</span>
-      <input type={type} value={value} onChange={onChange} />
+      <input value={value} onChange={onChange} />
     </label>
   )
 }

@@ -1,176 +1,133 @@
 import { useEffect, useRef, useState } from 'react'
-import { submitInspection, getInspection } from '../api'
-import { parseCsv, rowToPayload, BATCH_LIMIT } from '../batch'
+import { submitInspection, getInspection, clearHistory } from '../api'
 import ProgressBar from './ProgressBar'
-import AgentDetails from './AgentDetails'
+import WaferMap from './WaferMap'
 
-const SEVERITY_CLASS = { low: 'sev-low', medium: 'sev-medium', high: 'sev-high', critical: 'sev-critical' }
+// Lot scenarios: consecutive wafers from REAL held-out WM-811K lots, run through
+// the ML-only pipeline (no LLM calls) in order, so the Trend Detector's lot /
+// tool / material history builds up wafer by wafer.
 
-// Escape a value for CSV (quote if it contains comma/quote/newline).
-const csvCell = (v) => {
-  const s = String(v ?? '')
-  return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s
-}
+const PATTERN_LABEL = { batch_pattern: 'lot', machine_pattern: 'tool', supplier_pattern: 'material', isolated: '—' }
 
-export default function BatchPanel() {
-  const [items, setItems] = useState([]) // [{label, product, taskId, state, result}]
-  const [fileName, setFileName] = useState(null)
-  const [pending, setPending] = useState([]) // parsed payloads not yet run
+export default function BatchPanel({ scenarios, note }) {
+  const [items, setItems] = useState([])
+  const [active, setActive] = useState(null)
   const [running, setRunning] = useState(false)
-  const [note, setNote] = useState(null)
-  const [openIdx, setOpenIdx] = useState(null) // which row's full report is expanded
+  const [msg, setMsg] = useState(null)
   const timerRef = useRef(null)
 
-  async function onFile(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setFileName(file.name)
-    setItems([])
-    const text = await file.text()
-    const rows = parseCsv(text)
-    let payloads = rows.map(rowToPayload)
-    if (payloads.length > BATCH_LIMIT) {
-      setNote(`File has ${payloads.length} rows — running the first ${BATCH_LIMIT}.`)
-      payloads = payloads.slice(0, BATCH_LIMIT)
-    } else {
-      setNote(`${payloads.length} record(s) loaded.`)
-    }
-    setPending(payloads)
-  }
-
-  async function runBatch() {
-    if (!pending.length) return
+  async function run(idx) {
+    const sc = scenarios[idx]
+    setActive(idx)
     setRunning(true)
+    setMsg(null)
     const submitted = []
-    for (const p of pending) {
+    // Sequential submission keeps queue order = lot order (history depends on it).
+    for (const it of sc.items) {
       try {
-        // Batch uses the fast dry pipeline (full=false) — bulk classification only.
-        const { task_id } = await submitInspection(p.inspection, p.sensors, true)
-        submitted.push({ label: p.label, product: p.product, taskId: task_id, state: 'PENDING', result: null })
+        const { task_id } = await submitInspection(it.inspection, [], false)
+        submitted.push({ ...it, taskId: task_id, state: 'PENDING', result: null })
       } catch {
-        submitted.push({ label: p.label, product: p.product, taskId: null, state: 'FAILURE', result: null })
+        submitted.push({ ...it, taskId: null, state: 'FAILURE', result: null })
       }
     }
     setItems(submitted)
   }
 
-  // Poll all in-flight tasks until every one settles.
+  async function reset() {
+    await clearHistory()
+    setItems([])
+    setActive(null)
+    setMsg('Inspection history cleared — scenarios start from a clean slate.')
+  }
+
   useEffect(() => {
     if (!items.length) return
-    const anyPending = items.some((it) => it.taskId && it.state !== 'SUCCESS' && it.state !== 'FAILURE')
-    if (!anyPending) {
-      setRunning(false)
-      clearInterval(timerRef.current)
-      return
-    }
+    const pending = items.some((it) => it.taskId && !['SUCCESS', 'FAILURE'].includes(it.state))
+    if (!pending) { setRunning(false); return }
     timerRef.current = setInterval(async () => {
-      const updated = await Promise.all(
-        items.map(async (it) => {
-          if (!it.taskId || it.state === 'SUCCESS' || it.state === 'FAILURE') return it
-          try {
-            const data = await getInspection(it.taskId)
-            return { ...it, state: data.state, result: data.result || it.result }
-          } catch {
-            return it
-          }
-        })
-      )
+      const updated = await Promise.all(items.map(async (it) => {
+        if (!it.taskId || ['SUCCESS', 'FAILURE'].includes(it.state)) return it
+        try {
+          const d = await getInspection(it.taskId)
+          return { ...it, state: d.state, result: d.result || it.result }
+        } catch { return it }
+      }))
       setItems(updated)
     }, 800)
     return () => clearInterval(timerRef.current)
   }, [items])
 
-  const done = items.filter((it) => it.state === 'SUCCESS' || it.state === 'FAILURE').length
-  const progress = items.length ? done / items.length : 0
+  if (!scenarios) return <div className="card"><p className="batch-note">Loading scenarios…</p></div>
 
-  function downloadCsv() {
-    const header = ['record', 'product', 'defect_type', 'severity', 'confidence', 'status']
-    const rows = items.map((it) => {
-      const clf = it.result?.classification
-      return [
-        it.label,
-        it.product,
-        clf?.defect_type ?? '',
-        clf?.severity ?? '',
-        clf ? `${Math.round((clf.confidence_score || 0) * 100)}%` : '',
-        it.state,
-      ]
-    })
-    const csv = [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\n')
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'batch_results.csv'
-    a.click()
-    URL.revokeObjectURL(url)
-  }
+  const settled = items.filter((it) => ['SUCCESS', 'FAILURE'].includes(it.state))
+  const scored = settled.filter((it) => it.result?.classification)
+  const correct = scored.filter((it) => it.result.classification.pattern === it.true_pattern).length
 
   return (
     <div className="card">
       <div className="card-head">
-        <h2>Batch inspection</h2>
+        <h2>Lot scenarios</h2>
         <div className="head-actions">
-          {items.length > 0 && <span className="chip chip-ok">{done}/{items.length} done</span>}
-          {items.length > 0 && <button type="button" className="link" onClick={downloadCsv}>Download CSV</button>}
+          {items.length > 0 && <span className="chip chip-ok">{settled.length}/{items.length} done</span>}
+          {scored.length > 0 && <span className="chip">{correct}/{scored.length} match expert label</span>}
+          <button type="button" className="link" onClick={reset} disabled={running}>Reset history</button>
         </div>
       </div>
+      <p className="batch-hint">{note} Batch runs skip the LLM agents (fast, free); run a single wafer for the full report.</p>
+      {msg && <p className="batch-note">{msg}</p>}
 
-      <div className="batch-controls">
-        <label className="file-btn">
-          {fileName || 'Choose CSV file…'}
-          <input type="file" accept=".csv,text/csv" onChange={onFile} hidden />
-        </label>
-        <button className="submit inline" onClick={runBatch} disabled={!pending.length || running}>
-          {running ? 'Running…' : `Run ${pending.length || ''} record(s)`}
-        </button>
-      </div>
-      {note && <p className="batch-note">{note}</p>}
-      <p className="batch-hint">Expected columns (AI4I 2020): Product ID, Type, Air temperature [K], Process temperature [K], Rotational speed [rpm], Torque [Nm], Tool wear [min].</p>
-
-      {items.length > 0 && (
-        <>
-          <ProgressBar value={progress} label="Batch progress" />
-          <div className="table-wrap">
-            <table className="results-table">
-              <thead>
-                <tr><th>Record</th><th>Product</th><th>Defect</th><th>Severity</th><th>Conf.</th><th>Status</th><th>Report</th></tr>
-              </thead>
-              <tbody>
-                {items.map((it, i) => {
-                  const clf = it.result?.classification
-                  const settled = it.state === 'SUCCESS' || it.state === 'FAILURE'
-                  const hasReport = it.state === 'SUCCESS' && it.result
-                  return (
-                    <tr key={i}>
-                      <td className="mono">{it.label}</td>
-                      <td className="mono">{it.product}</td>
-                      <td>{clf ? clf.defect_type?.replaceAll('_', ' ') : '—'}</td>
-                      <td>{clf ? <span className={`badge ${SEVERITY_CLASS[clf.severity] || ''}`}>{clf.severity}</span> : '—'}</td>
-                      <td className="mono">{clf ? `${Math.round((clf.confidence_score || 0) * 100)}%` : '—'}</td>
-                      <td>{settled
-                        ? <span className={`dotstate ${it.state === 'SUCCESS' ? 'ok' : 'fail'}`}>{it.state === 'SUCCESS' ? 'done' : 'failed'}</span>
-                        : <span className="node-spinner sm" />}</td>
-                      <td>{hasReport
-                        ? <button type="button" className="link" onClick={() => setOpenIdx(openIdx === i ? null : i)}>{openIdx === i ? 'Hide' : 'View'}</button>
-                        : '—'}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+      <div className="scenarios">
+        {scenarios.map((sc, i) => (
+          <div key={i} className={`scenario ${active === i ? 'active' : ''}`}>
+            <h3>{sc.name}</h3>
+            <p>{sc.story}</p>
+            <p className="batch-hint">
+              {sc.items.length} wafers · {sc.lot} · true labels: {Object.entries(sc.counts).map(([k, v]) => `${k} ${v}`).join(', ')}
+            </p>
+            <button className="submit inline" onClick={() => run(i)} disabled={running}>
+              {running && active === i ? 'Running…' : 'Run this lot'}
+            </button>
           </div>
+        ))}
+      </div>
 
-          {openIdx != null && items[openIdx]?.result && (
-            <div className="batch-detail">
-              <div className="card-head">
-                <h3>Report — {items[openIdx].label} · {items[openIdx].product}</h3>
-                <button type="button" className="link" onClick={() => setOpenIdx(null)}>Close</button>
-              </div>
-              <AgentDetails state={items[openIdx].result} />
-            </div>
-          )}
-        </>
-      )}
+      {items.length > 0 && (<>
+        <ProgressBar value={settled.length / items.length} label="Lot progress" />
+        <div className="table-wrap">
+          <table className="results-table">
+            <thead>
+              <tr><th>#</th><th>Wafer</th><th>Map</th><th>Tool</th><th>Expert</th><th>Model</th><th>Conf.</th><th>Trend</th><th>Escalate</th></tr>
+            </thead>
+            <tbody>
+              {items.map((it, i) => {
+                const clf = it.result?.classification
+                const tr = it.result?.trend
+                const ok = clf && clf.pattern === it.true_pattern
+                return (
+                  <tr key={i}>
+                    <td className="mono">{i + 1}</td>
+                    <td className="mono">{it.inspection.wafer_id}</td>
+                    <td><WaferMap grid={it.inspection.wafer_map} size={40} /></td>
+                    <td className="mono">{it.inspection.machine_id}</td>
+                    <td>{it.true_pattern}</td>
+                    <td className={clf ? (ok ? 'cell-ok' : 'cell-bad') : ''}>
+                      {clf ? clf.pattern : <span className="node-spinner sm" />}
+                    </td>
+                    <td className="mono">{clf ? `${Math.round(clf.confidence_score * 100)}%` : ''}</td>
+                    <td title={tr?.summary}>{tr ? PATTERN_LABEL[tr.pattern] ?? tr.pattern : ''}</td>
+                    <td>{tr ? (tr.escalate ? <span className="badge sev-high">yes</span> : 'no') : ''}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        {(() => {
+          const last = [...items].reverse().find((it) => it.result?.trend?.escalate)
+          return last && <div className="alert warn"><strong>Trend detector:</strong> {last.result.trend.summary}</div>
+        })()}
+      </>)}
     </div>
   )
 }
