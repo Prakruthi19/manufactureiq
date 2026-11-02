@@ -241,7 +241,7 @@ def test_api_read_endpoints():
     from fastapi.testclient import TestClient
     from api.main import app
     c = TestClient(app)
-    assert c.get("/api/health").json() == {"status": "ok"}
+    assert c.get("/api/health").json()["status"] == "ok"
     card = c.get("/api/model-card").json()
     assert card["wafer_classifier"]["selected_strategy"]
     assert card["process_monitor"]["test"]["pr_auc"] is not None

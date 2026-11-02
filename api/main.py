@@ -6,6 +6,12 @@ Thin REST layer over the Celery pipeline.
 Run (from project root, with Redis up and a Celery worker running):
     uvicorn api.main:app --reload --port 8000
 
+TASK_MODE (env var):
+    celery  (default) — enqueue to Redis; a separate Celery worker runs the pipeline.
+    inline            — run the pipeline in this process via BackgroundTasks, one
+                        record at a time; status lives in Redis (tasks/inline_runner.py).
+                        Used for the single free Render instance.
+
 Endpoints:
     GET  /api/health                     — liveness
     POST /api/inspections                — submit an inspection, returns task_id
@@ -17,17 +23,24 @@ Endpoints:
 """
 
 import json
+import os
+import uuid
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from celery.result import AsyncResult
 
 from celery_app import celery_app
 from tasks.inspection_task import run_pipeline
+from tasks import inline_runner
+
+TASK_MODE = os.getenv("TASK_MODE", "celery").strip().lower()
+if TASK_MODE not in ("celery", "inline"):
+    raise RuntimeError(f"TASK_MODE must be 'celery' or 'inline', got {TASK_MODE!r}")
 
 app = FastAPI(title="ManufactureIQ API", version="0.1.0")
 
@@ -68,12 +81,18 @@ class StatusResponse(BaseModel):
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "task_mode": TASK_MODE}
 
 
 @app.post("/api/inspections", response_model=SubmitResponse)
-def submit_inspection(req: InspectionRequest) -> SubmitResponse:
-    """Enqueue an inspection for pipeline processing."""
+def submit_inspection(req: InspectionRequest, background: BackgroundTasks) -> SubmitResponse:
+    """Enqueue an inspection for pipeline processing. Returns immediately in both modes."""
+    if TASK_MODE == "inline":
+        task_id = str(uuid.uuid4())
+        inline_runner.mark_queued(task_id)
+        background.add_task(inline_runner.run_job, task_id, req.inspection, req.sensors, req.full)
+        return SubmitResponse(task_id=task_id, status="queued")
+
     async_result = run_pipeline.delay(req.inspection, req.sensors, req.full)
     return SubmitResponse(task_id=async_result.id, status="queued")
 
@@ -81,6 +100,12 @@ def submit_inspection(req: InspectionRequest) -> SubmitResponse:
 @app.get("/api/inspections/{task_id}", response_model=StatusResponse)
 def get_inspection(task_id: str) -> StatusResponse:
     """Poll a submitted inspection by its task id."""
+    if TASK_MODE == "inline":
+        rec = inline_runner.get_status(task_id)
+        return StatusResponse(task_id=task_id, state=rec.get("state", "PENDING"),
+                              progress=rec.get("progress"), result=rec.get("result"),
+                              error=rec.get("error"))
+
     res: AsyncResult = celery_app.AsyncResult(task_id)
     out = StatusResponse(task_id=task_id, state=res.state)
 

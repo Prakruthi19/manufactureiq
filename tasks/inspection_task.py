@@ -6,10 +6,15 @@ Each inspection record runs through the pipeline as an independent async task.
 - full=True  → the full 7-agent LangGraph pipeline (run_graph), non-interactive.
 - full=False → the fast dry pipeline (ingestor → sensor_parser → classifier),
                used for bulk CSV batches so they don't fire N× LLM calls.
+
+The pipeline body lives in `execute_pipeline()` so it can run either inside a
+Celery worker (TASK_MODE=celery) or inline in the API process (TASK_MODE=inline,
+see tasks/inline_runner.py). Both report progress through the same callback shape.
 """
 
 import uuid
 from datetime import datetime
+from typing import Callable
 
 from celery_app import celery_app
 from core.state import PipelineState
@@ -27,25 +32,12 @@ _NODE_TO_AGENT = {
     "compliance_report": "compliance",
 }
 
+# report(state=..., meta=...) — same signature as Celery's Task.update_state.
+ReportFn = Callable[..., None]
 
-@celery_app.task(
-    bind=True,
-    name="tasks.inspection_task.run_pipeline",
-    max_retries=3,
-    default_retry_delay=5,
-)
-def run_pipeline(self, inspection_payload: dict, sensor_payload: list, full: bool = True) -> dict:
-    """
-    Run the ManufactureIQ pipeline for one inspection record.
 
-    Args:
-        inspection_payload: raw inspection JSON
-        sensor_payload:     list of sensor reading dicts
-        full:               True = full 7-agent pipeline, False = dry (3 agents)
-
-    Returns:
-        Final PipelineState as a JSON-safe dict.
-    """
+def execute_pipeline(inspection_payload: dict, sensor_payload: list, full: bool, report: ReportFn) -> dict:
+    """Run the pipeline for one record, calling `report` with progress after each agent."""
     state = PipelineState(
         run_id=str(uuid.uuid4()),
         status="received",
@@ -55,7 +47,7 @@ def run_pipeline(self, inspection_payload: dict, sensor_payload: list, full: boo
         raw_sensor_payload=sensor_payload or [],
     )
 
-    self.update_state(
+    report(
         state="PROGRESS",
         meta={"run_id": state.run_id, "status": state.status, "current": None, "completed": []},
     )
@@ -76,7 +68,7 @@ def run_pipeline(self, inspection_payload: dict, sensor_payload: list, full: boo
             if k not in completed:
                 completed.append(k)
         status = payload.get("status") if isinstance(payload, dict) else getattr(payload, "status", "running")
-        self.update_state(
+        report(
             state="PROGRESS",
             meta={"run_id": state.run_id, "status": status, "current": keys[-1], "completed": list(completed)},
         )
@@ -88,3 +80,24 @@ def run_pipeline(self, inspection_payload: dict, sensor_payload: list, full: boo
         final_state = run_dry_pipeline(state, on_step=_on_step)
 
     return final_state.model_dump(mode="json")
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.inspection_task.run_pipeline",
+    max_retries=3,
+    default_retry_delay=5,
+)
+def run_pipeline(self, inspection_payload: dict, sensor_payload: list, full: bool = True) -> dict:
+    """
+    Run the ManufactureIQ pipeline for one inspection record (Celery worker).
+
+    Args:
+        inspection_payload: raw inspection JSON
+        sensor_payload:     list of sensor reading dicts
+        full:               True = full 7-agent pipeline, False = dry (3 agents)
+
+    Returns:
+        Final PipelineState as a JSON-safe dict.
+    """
+    return execute_pipeline(inspection_payload, sensor_payload, full, report=self.update_state)

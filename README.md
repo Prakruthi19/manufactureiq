@@ -177,14 +177,22 @@ Notes: the free Space **sleeps after ~48h idle** (wakes on next visit) and stora
 is ephemeral — fine, since `models/`, `data/chroma/` and the demo samples ship inside
 the image. Only OpenAI usage (agents 4, 6, 7 with `gpt-4o-mini`) costs anything.
 
-### Option B — Render (managed, ~$14/mo)
+### Option B — Render (free tier, single web service)
 
-A `render.yaml` blueprint is included (Redis + web + worker + static frontend).
-Push to GitHub → Render → **New + → Blueprint** → pick the repo → paste
-`OPENAI_API_KEY` when prompted. Note: Render has **no free tier for workers**, so
-the `miq-api` and `miq-worker` services are ~$7/mo each; Redis and the static site
-are free. If the API service gets a URL other than `miq-api.onrender.com`, update
-the rewrite `destination` in `render.yaml`.
+**Deployment note:** locally, ManufactureIQ runs with **Celery workers** pulling
+inspection records off a Redis queue, so multiple records go through the 7-agent pipeline
+in parallel (`TASK_MODE=celery`, the default). The hosted demo runs in **inline mode**
+(`TASK_MODE=inline`) on **one free Render web service**. The API runs each record
+itself using FastAPI `BackgroundTasks`, one at a time to stay within OpenAI rate limits.
+It writes progress and results to the free `miq-redis` instance, so the dashboard checks
+the same `GET /api/inspections/{id}` endpoint either way. The Celery code is unchanged.
+
+`render.yaml` sets this up: free Redis, a free `miq-api` with `TASK_MODE=inline`, and
+the free static frontend. Push to GitHub → Render → **New + → Blueprint** → pick the
+repo → paste `OPENAI_API_KEY`. If the API gets a URL other than
+`miq-api.onrender.com`, update the rewrite `destination` in `render.yaml`. Free
+instances sleep after ~15 min idle (~1 min cold start), and a job that's running when
+the instance restarts is lost.
 
 ### Option C — laptop / single VM
 
