@@ -13,7 +13,7 @@ chromadb>=0.5.0
 
 
 # ── ML models ────────────────────────────────────────────────────
-scikit-learn>=1.5.0
+scikit-learn==1.7.2        # must match the version models/*.pkl were saved with
 xgboost>=2.0.0
 joblib>=1.4.0
 scipy>=1.11.0              # wafer-map cluster features (ndimage)

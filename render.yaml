@@ -50,10 +50,10 @@ services:
     staticPublishPath: frontend/dist
     routes:
       # Proxy /api to the backend so the browser stays same-origin (no CORS needed).
-      # ⚠️ If Render names your API service differently, update this host.
+      # ⚠️ Render assigned miq-api the host miq-api-s7y4.onrender.com — update if it changes.
       - type: rewrite
         source: /api/*
-        destination: https://miq-api.onrender.com/api/*
+        destination: https://miq-api-s7y4.onrender.com/api/*
       # SPA fallback — every other path serves the app shell.
       - type: rewrite
         source: /*
